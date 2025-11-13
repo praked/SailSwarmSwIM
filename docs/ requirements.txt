@@ -1,0 +1,13 @@
+# docs/requirements.txt
+# Dependencies required to build the documentation on Read the Docs
+
+# Core documentation tooling
+sphinx>=7.0
+sphinx-rtd-theme>=2.0
+
+# To include README.md (Markdown) in the Sphinx docs
+myst-parser>=3.0
+
+# Runtime dependencies needed so autodoc can import the module
+numpy>=1.24
+matplotlib>=3.8
