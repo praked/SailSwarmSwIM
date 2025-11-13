@@ -23,7 +23,7 @@ class Plotter:
         self.animation = {}
 
         for i,agent in enumerate(self.sim.agents):
-            color = plt.get_cmap('tab20')(i % 20)
+            color = plt.get_cmap('winter')(i % 20)
             self.add(agent, color)
 
     def add(self,agent,color):
@@ -90,10 +90,16 @@ class Plotter:
         sin = np.sin(np.deg2rad(agent.psi))
         cos = np.cos(np.deg2rad(agent.psi))
         xg,yg = agent.pos[0],agent.pos[1]
+        length = 0.3  # was 0.2
+        width  = 0.4  # was 0.1
 
-        x1 = [xg +0.2*cos         , yg +0.2*sin       ]
-        x2 = [xg -0.2*cos -0.1*sin, yg+0.1*cos-0.2*sin]
-        x3 = [xg -0.2*cos +0.1*sin, yg-0.1*cos-0.2*sin]
+        x1 = [xg + length * cos,                   yg + length * sin]
+        x2 = [xg - length * cos - width * sin,     yg + width * cos - length * sin]
+        x3 = [xg - length * cos + width * sin,     yg - width * cos - length * sin]
+
+        # x1 = [xg +0.2*cos         , yg +0.2*sin       ]
+        # x2 = [xg -0.2*cos -0.1*sin, yg+0.1*cos-0.2*sin]
+        # x3 = [xg -0.2*cos +0.1*sin, yg-0.1*cos-0.2*sin]
         return np.array([x1,x2,x3])
         
 

@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from SwarmSwIM.agent_class import Agent
 from .physics import *
 
@@ -25,6 +26,8 @@ class SailAgent(Agent):
         self.physics = SimplifiedSailingMechanics()  # TODO: make xml config
         # self.physics = RealisticSailingMechanics()  # TODO: make xml config
 
+
+
         # Heading control for yawrate mode
         # self.max_yawrate = 30.0  # degrees per second
         # self.heading_kp = 2.0  # proportional gain for heading control
@@ -44,7 +47,7 @@ class SailAgent(Agent):
 class WaypointPlanner:
     """Manages sequential waypoint navigation and completion tracking"""
 
-    def __init__(self, waypoint_tolerance=2.0):
+    def __init__(self, waypoint_tolerance=15.0):
         """
         Args:
             waypoint_tolerance: distance in meters where an agent is said to have completed a waypoint
@@ -52,6 +55,10 @@ class WaypointPlanner:
         self.waypoint_tolerance = waypoint_tolerance
         self.waypoints = []
         self.current_waypoint_index = 0
+        self.viz_target = None
+
+        # Do not advance to next waypoint when True
+        self.hold_at_target = False
 
     @property
     def target_waypoint(self):
@@ -76,11 +83,24 @@ class WaypointPlanner:
     def update(self, agent_pos):
         """Readjust target waypoint based on agent position"""
         if self.get_distance_to_current_waypoint(agent_pos) < self.waypoint_tolerance:
-            self.current_waypoint_index += 1
+            if not self.hold_at_target:
+                self.current_waypoint_index += 1
 
+
+    def set_hold(self, hold: bool):
+        """Enable/disable holding at current target waypoint."""
+        self.hold_at_target = bool(hold)
+    
     def set_waypoint_sequence(self, waypoints):
         """Set a complete sequence of waypoints to navigate through"""
         self.waypoints = waypoints.copy()
+        self.current_waypoint_index = 0
+
+    def set_transient_target(self, waypoint):
+        """Replace the current sequence with a single, transient target.
+        Used by station-keeping to drive a moving virtual waypoint.
+        """
+        self.waypoints = [waypoint]
         self.current_waypoint_index = 0
 
     def append_waypoint(self, waypoint):
@@ -123,7 +143,7 @@ class WaypointPlanner:
 class SailNavigation:
     """Navigation behavior tree for waypoint following, station-keeping, etc."""
 
-    def __init__(self, waypoint_tolerance=2.0):
+    def __init__(self, waypoint_tolerance=15.0):
         """Navigation system using composition with WaypointPlanner
 
         Args:
@@ -170,7 +190,7 @@ class SailNavigation:
 
 
 class TackingNavigation(SailNavigation):
-    def __init__(self, Dt=0.1, waypoint_tolerance=2.0, tack_duration=20.0):
+    def __init__(self, Dt=0.1, waypoint_tolerance=15.0, tack_duration=20.0):
         """Tacking navigation
 
         Args:
@@ -184,19 +204,125 @@ class TackingNavigation(SailNavigation):
         self.tack_duration = tack_duration
         self.tack_angle = 45.0  # nearest sail direction from oncoming wind
 
+        # --- Station-keeping (figure-eight) parameters ---
+        self.loiter_r_min = float(os.environ.get('SWARM_LOITER_R_MIN', '3.0'))
+        self.loiter_r_max = float(os.environ.get('SWARM_LOITER_R_MAX', '10.0'))
+        self.loiter_wind_gain = float(os.environ.get('SWARM_LOITER_WIND_GAIN', '0.5'))  # m per (m/s)
+        self.loiter_omega = float(os.environ.get('SWARM_LOITER_OMEGA', '0.4'))  # rad/s
+        self.loiter_center = None  # dict with keys x,y
+
+
         super().__init__(waypoint_tolerance)
 
     def tick(self, agent, true_wind):
         """Update Navigation decision-making"""
+        # Ensure waypoint logic is up to date
+        self.wp.update(agent.pos)
+
+        # Helper to extract current target coordinates if any
+        def _target_xy():
+            if self.wp.target_waypoint is None:
+                return None
+            if isinstance(self.wp.target_waypoint, dict):
+                return float(self.wp.target_waypoint["x"]), float(self.wp.target_waypoint["y"])
+            return float(self.wp.target_waypoint[0]), float(self.wp.target_waypoint[1])
+
+        # Determine if we should loiter
+        dist = self.wp.get_distance_to_current_waypoint(agent.pos)
+        arrived = dist <= self.wp.waypoint_tolerance
+
+        if self.loiter_center is not None or arrived:
+            # Capture center the first time we arrive
+            if self.loiter_center is None:
+                xy = _target_xy()
+                if xy is not None:
+                    self.loiter_center = {"x": xy[0], "y": xy[1], "name": "LoiterCenter"}
+            # Run loiter control
+            #print("loit")
+            #print(agent.name,self.loiter_center)
+            self.station_keep(agent, true_wind)
+            return
+
+        # No loitering yet. Navigate normally.
         if self.wp.target_waypoint is None:
-            # Maintain current position
-            if len(self.wp.waypoints) == 0:
-                self.wp.target_waypoint = agent.pos
-            else:
-                self.wp.target_waypoint = self.wp.waypoints[-1]
-            # self.station_keep(agent, true_wind)
+            # Maintain current position as target until a real waypoint appears.
+            # Store as a dict instead of a numpy array to avoid ambiguous truth-value
+            # comparisons inside WaypointPlanner (np.array == np.array -> array of bools).
+            self.wp.target_waypoint = {
+                "x": float(agent.pos[0]),
+                "y": float(agent.pos[1]),
+                "name": f"{agent.name}_hold",
+            }
+            agent.viz_target = {"x": float(agent.pos[0]), "y": float(agent.pos[1])}
+            return
         else:
             self.navigate_to_waypoint(agent, true_wind)
+
+    def station_keep(self, agent, true_wind):
+        """Station-keeping around a FIXED center.
+
+        - The loiter center is captured once (outside) and never moved here.
+        - Follow a circle or figure-eight around that center.
+        - Radius scales with wind but is clamped.
+        - If a leash distance is exceeded, return to center, then resume.
+        """
+        if self.loiter_center is None:
+            return
+
+        # Fixed center (do not modify here)
+        cx = float(self.loiter_center["x"]) if isinstance(self.loiter_center, dict) else float(self.loiter_center[0])
+        cy = float(self.loiter_center["y"]) if isinstance(self.loiter_center, dict) else float(self.loiter_center[1])
+
+        # Wind-based radius selection
+        wnx, wny = float(true_wind[0]), float(true_wind[1])
+        wmag = np.hypot(wnx, wny)
+        r = self.loiter_r_min + self.loiter_wind_gain * wmag
+        r = max(self.loiter_r_min, min(self.loiter_r_max, r))
+
+        # Choose path pattern
+        pattern = os.environ.get("SWARM_STATION_PATTERN", "lemniscate").lower()
+        t = agent.internal_clock
+        theta = self.loiter_omega * t
+        if pattern.startswith("circ"):
+            # Circle
+            x_local = r * np.cos(theta)
+            y_local = r * np.sin(theta)
+        else:
+            # Figure-eight (Gerono lemniscate)
+            x_local = r * np.cos(theta)
+            y_local = 0.6 * r * np.sin(2.0 * theta)
+
+        # Align loop with wind direction for realism
+        wind_dir = np.arctan2(wny, wnx) if wmag > 1e-6 else 0.0
+        c, s = np.cos(wind_dir), np.sin(wind_dir)
+        dx = c * x_local - s * y_local
+        dy = s * x_local + c * y_local
+
+        target_x = cx + dx
+        target_y = cy + dy
+
+        # Hard leash: keep vehicle from wandering too far from center
+        leash_mult = float(os.environ.get("SWARM_LOITER_LEASH_MULT", "1.75"))
+        max_drift = leash_mult * r
+        d_center = np.hypot(agent.pos[0] - cx, agent.pos[1] - cy)
+        if d_center > max_drift:
+            target_x, target_y = cx, cy
+            target_name = "Return"
+        else:
+            target_name = "Loiter"
+
+        # Update visualization target for plotter (non-waypoint overlay)
+        agent.viz_target = {"x": float(target_x), "y": float(target_y)}
+
+        # Drive the agent using a transient target, but DO NOT change center
+        self.wp.set_transient_target({"name": target_name, "x": target_x, "y": target_y})
+        self.status = f"LOITER[{pattern}] r={r:.1f} leash={max_drift:.1f} -> ({target_x:.1f},{target_y:.1f})"
+
+        # Command heading toward the transient waypoint using standard tacking logic
+        desired_heading = self.calculate_heading(agent, np.array([wnx, wny]))
+        if desired_heading is not None:
+            agent.cmd_heading = desired_heading % 360
+
 
     def calculate_heading(self, agent, true_wind):
         self.wp.update(agent.pos)
@@ -275,6 +401,17 @@ class TackingNavigation(SailNavigation):
             return
 
         desired_heading = self.calculate_heading(agent, true_wind)
+        # Expose current nav target for visualization without touching sim.waypoints
+        if isinstance(self.wp.target_waypoint, dict):
+            agent.viz_target = {
+                "x": float(self.wp.target_waypoint["x"]),
+                "y": float(self.wp.target_waypoint["y"]),
+            }
+        else:
+            agent.viz_target = {
+                "x": float(self.wp.target_waypoint[0]),
+                "y": float(self.wp.target_waypoint[1]),
+            }
         agent.cmd_heading = desired_heading % 360
 
 

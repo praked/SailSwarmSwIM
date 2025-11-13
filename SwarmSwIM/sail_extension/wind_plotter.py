@@ -12,9 +12,9 @@ class WindVisualization:
         self,
         wind_field,
         density=5,
-        arrow_color="blue",
+        arrow_color="lightgrey",
         show_contours=True,
-        min_arrow_speed=1,
+        min_arrow_speed=2,
     ):
         """
         Initialize wind visualization
@@ -185,10 +185,13 @@ class WindPlotter(Plotter):
         SIZE=30,
         artistics=[],
         show_wind=True,
-        wind_grid_density=3,
+        wind_grid_density=10,
         show_waypoints=True,
         show_wind_contours=True,
         wind_update_interval=10,
+        show_agent_targets=True,
+        show_agent_status=True,
+        agent_goal_radius=0.18,
     ):
         """
         Initialize WindPlotter with wind visualization
@@ -211,6 +214,10 @@ class WindPlotter(Plotter):
         self.show_wind_contours = show_wind_contours
         self.wind_field = wind_field
         self.wind_update_interval = wind_update_interval
+        self.show_agent_targets = show_agent_targets
+        self.show_agent_status = show_agent_status
+        self.agent_goal_radius = agent_goal_radius
+        self.agent_goal_color = "magenta"
 
         if self.show_wind:
             self.wind_viz = WindVisualization(
@@ -259,7 +266,7 @@ class WindPlotter(Plotter):
             ha="center",
             va="bottom",
             color="orange",
-            fontweight="bold",
+            fontsize=6,
             zorder=11,
         )
         self.animation[waypoint["name"]] = {
@@ -268,27 +275,81 @@ class WindPlotter(Plotter):
         }
 
     def draw_agent_label(self, agent):
-        """Create a label showing agent speed, heading, and position that follows each agent"""
-        # label_text = f"{agent.name}: {agent.vel:.1f}m/s | H:{agent.psi:.0f}°"
-        label_text = f"{agent}"
+        """Create or update the status label next to each agent. Honors self.show_agent_status."""
+        if agent.name not in self.animation:
+            return
+        entry = self.animation[agent.name]
 
-        # Offset text from agent's current position
+        # If disabled, hide existing label if any
+        if not getattr(self, "show_agent_status", True):
+            lbl = entry.get("legend")
+            if lbl is not None:
+                lbl.set_visible(False)
+            return
+
+        label_text = f"{agent}"
         x = agent.pos[0]
         y = agent.pos[1] + 1
 
-        agent_stats = self.ax.text(
-            x,
-            y,
-            label_text,
-            fontsize=6,
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
-            horizontalalignment="center",
-            verticalalignment="top",
-            linespacing=0.5,
-        )
+        lbl = entry.get("legend")
+        if lbl is None:
+            lbl = self.ax.text(
+                x, y, label_text,
+                fontsize=6,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9),
+                horizontalalignment="center",
+                verticalalignment="top",
+                linespacing=0.5,
+                zorder=14,
+            )
+            entry["legend"] = lbl
+        else:
+            lbl.set_text(label_text)
+            lbl.set_position((x, y))
+            lbl.set_visible(True)
+    def ensure_agent_goal(self, agent):
+        """Create or update a non-waypoint goal marker for an agent.
+        Uses agent.viz_target {"x":..., "y":...} if available.
+        """
+        if not self.show_agent_targets:
+            return None, None
+        if agent.name not in self.animation:
+            return None, None
 
-        self.animation[agent.name]["legend"] = agent_stats
+        entry = self.animation[agent.name]
+        goal_marker = entry.get("goal_marker")
+        goal_label = entry.get("goal_label")
 
+        tgt = getattr(agent, "viz_target", None)
+        if tgt is None or "x" not in tgt or "y" not in tgt:
+            if goal_marker is not None:
+                goal_marker.set_visible(False)
+            if goal_label is not None:
+                goal_label.set_visible(False)
+            return goal_marker, goal_label
+
+        gx = float(tgt["x"]); gy = float(tgt["y"])
+
+        if goal_marker is None:
+            goal_marker = plt.Circle(
+                (gx, gy), radius=self.agent_goal_radius,
+                color=self.agent_goal_color, fill=False, lw=1.0, zorder=12
+            )
+            self.ax.add_patch(goal_marker)
+            entry["goal_marker"] = goal_marker
+        if goal_label is None:
+            goal_label = self.ax.text(
+                gx, gy + 0.8, "goal",
+                ha="center", va="bottom",
+                color=self.agent_goal_color, fontsize=5, zorder=13
+            )
+            entry["goal_label"] = goal_label
+
+        goal_marker.center = (gx, gy)
+        goal_marker.set_visible(True)
+        goal_label.set_position((gx, gy + 0.8))
+        goal_label.set_visible(True)
+        return goal_marker, goal_label
     # TODO: better way? super()?
     def update_plot(self, callback=None):
         """Override with wind visualization updates"""
@@ -323,15 +384,24 @@ class WindPlotter(Plotter):
                 pts = self.calculate_triangle(agent)
                 self.animation[agent.name]["figure"].set_xy(pts)
 
-                # Update agent legend
+                # Update or hide agent legend depending on toggle
                 self.draw_agent_label(agent)
+                legend = self.animation[agent.name].get("legend") if agent.name in self.animation else None
+                if self.show_agent_status and legend is not None and legend.get_visible():
+                    artist_list.append(legend)
+
+                # Update per-agent goal visualization and add to artists if visible
+                gm, gl = self.ensure_agent_goal(agent)
+                if gm is not None and gm.get_visible():
+                    artist_list.append(gm)
+                if gl is not None and gl.get_visible():
+                    artist_list.append(gl)
 
                 # add to artists list
                 artist_list.extend(
                     [
                         self.animation[agent.name]["line"],
                         self.animation[agent.name]["figure"],
-                        self.animation[agent.name]["legend"],
                     ]
                 )
 
