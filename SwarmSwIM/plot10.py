@@ -102,7 +102,62 @@ def compute_stats(merged: pd.DataFrame):
     return stats
 
 
-def plot_stats(stats: dict, n_runs: int, out_prefix: str):
+# ---- New helper: parse experiment parameter info from README.md ----
+def parse_params_from_readme(readme_path: pathlib.Path) -> str | None:
+    """
+    Parse a short parameter string from a README.md file in an experiment folder.
+
+    Expected lines (from ScriptFlocking.sh):
+    - SWARM_ZOR (repulsion radius):   VALUE
+    - SWARM_ZOO (orientation radius): VALUE
+    - SWARM_ZOA (attraction radius):  VALUE
+    - SWARMSWIM_DOMAIN (half-size):   VALUE
+    - SWARM_T_MAX (duration):         VALUE s
+    """
+    if not readme_path.is_file():
+        return None
+
+    params = {}
+    try:
+        with readme_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("- SWARM_ZOR"):
+                    params["ZOR"] = line.split(":", 1)[1].strip()
+                elif line.startswith("- SWARM_ZOO"):
+                    params["ZOO"] = line.split(":", 1)[1].strip()
+                elif line.startswith("- SWARM_ZOA"):
+                    params["ZOA"] = line.split(":", 1)[1].strip()
+                elif line.startswith("- SWARMSWIM_DOMAIN"):
+                    params["DOMAIN"] = line.split(":", 1)[1].strip()
+                elif line.startswith("- SWARM_T_MAX"):
+                    val = line.split(":", 1)[1].strip()
+                    if val.endswith(" s"):
+                        val = val[:-2].strip()
+                    params["T_MAX"] = val
+    except Exception:
+        return None
+
+    if not params:
+        return None
+
+    # Build a compact one-line description
+    parts = []
+    if "ZOR" in params:
+        parts.append(f"ZOR={params['ZOR']}")
+    if "ZOO" in params:
+        parts.append(f"ZOO={params['ZOO']}")
+    if "ZOA" in params:
+        parts.append(f"ZOA={params['ZOA']}")
+    if "DOMAIN" in params:
+        parts.append(f"DOMAIN SIZE={params['DOMAIN']}")
+    if "T_MAX" in params:
+        parts.append(f"DURATION={params['T_MAX']}s")
+
+    return ", ".join(parts) if parts else None
+
+
+def plot_stats(stats, n_runs, out_prefix, exp_name=None, param_info=None):
     time = stats["time"]
 
     fig, axes = plt.subplots(
@@ -114,6 +169,12 @@ def plot_stats(stats: dict, n_runs: int, out_prefix: str):
     )
     # Set x-axis major ticks every 15 time units (shared across all subplots)
     axes[-2].yaxis.set_major_locator(MultipleLocator(0.25))
+    # Build a figure-level title using experiment name and parameter info
+    title_lines = []
+    title_lines.append(f"Flocking metrics ({n_runs} runs)")
+    if param_info:
+        title_lines.append(param_info)
+    fig.suptitle("\n".join(title_lines), fontsize=FONT_SIZE_BASE + 1)
     # 1) Area
     ax = axes[0]
     ax.plot(time, stats["area_mean"], color=COLOR_AREA, linewidth=1.4, label="Mean")
@@ -126,7 +187,6 @@ def plot_stats(stats: dict, n_runs: int, out_prefix: str):
         label="±1 SD",
     )
     ax.set_ylabel("Flock area [arb. units]")
-    ax.set_title(f"Flocking metrics ({n_runs} runs)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", frameon=False)
 
@@ -172,14 +232,14 @@ def plot_stats(stats: dict, n_runs: int, out_prefix: str):
 def main():
     # Collect experiment folders:
     #   - experiment_day2_*
-    #   - experimentday3_*
+    #   - experiment_day3_*
     exp_dirs = []
 
     exp_dirs.extend(sorted(BASE_DIR.glob("experiment_day2_*")))
-    exp_dirs.extend(sorted(BASE_DIR.glob("experimentday3_*")))
+    exp_dirs.extend(sorted(BASE_DIR.glob("experiment_day3_*")))
 
     if not exp_dirs:
-        raise FileNotFoundError("No experiment directories found matching 'experiment_day2_*' or 'experimentday3_*'")
+        raise FileNotFoundError("No experiment directories found matching 'experiment_day2_*' or 'experiment_day3_*'")
 
     print("Found experiment directories:")
     for d in exp_dirs:
@@ -202,6 +262,11 @@ def main():
 
         stats = compute_stats(merged)
 
+        # Read parameter details from README, if present
+        readme_path = exp_dir / "README.md"
+        param_info = parse_params_from_readme(readme_path)
+        exp_name = exp_dir.name
+
         # Local output prefix: inside the experiment folder
         local_prefix = str(exp_dir / exp_dir.name)
 
@@ -209,10 +274,22 @@ def main():
         analysis_prefix = str(ANALYSIS_DIR / exp_dir.name)
 
         # Plot into experiment folder
-        plot_stats(stats, n_runs=len(files), out_prefix=local_prefix)
+        plot_stats(
+            stats,
+            n_runs=len(files),
+            out_prefix=local_prefix,
+            exp_name=exp_name,
+            param_info=param_info,
+        )
 
         # Plot into analysis folder
-        plot_stats(stats, n_runs=len(files), out_prefix=analysis_prefix)
+        plot_stats(
+            stats,
+            n_runs=len(files),
+            out_prefix=analysis_prefix,
+            exp_name=exp_name,
+            param_info=param_info,
+        )
 
 
 if __name__ == "__main__":
