@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 import numpy as np
+import csv
+from datetime import datetime
 
 from SwarmSwIM import Simulator
 from .sail_extension.wind_plotter import WindPlotter
@@ -31,13 +33,90 @@ ZOA = float(os.environ.get("SWARM_ZOA", "18.0"))      # Attraction radius
 W_ORI = float(os.environ.get("SWARM_W_ORI", "1.0"))   # Weight for alignment
 W_ATT = float(os.environ.get("SWARM_W_ATT", "0.6"))   # Weight for attraction
 
+
 NOISE_STD_DEG = float(os.environ.get("SWARM_FLOCK_NOISE", "3.0"))  # angular noise std dev
+
+# Max simulation time (seconds)
+T_MAX = float(os.environ.get("SWARM_T_MAX", "300.0"))
+
+
+# Metrics logging period (seconds)
+METRICS_PERIOD = float(os.environ.get("SWARM_METRICS_PERIOD", "1.0"))
+
+# Headless / batch mode (no interactive matplotlib window)
+HEADLESS = os.environ.get("SWARM_HEADLESS", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Domain boundary steering
 BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))      # strength of "push" back inside
 BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))  # soft wall thickness in meters
 
+METRICS_FILE = os.environ.get(
+    "SWARM_METRICS_FILE",
+    f"flocking_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+)
 
+_metrics_writer = None
+def init_metrics_logger():
+    global _metrics_writer
+    f = open(METRICS_FILE, "w", newline="")
+    _metrics_writer = csv.writer(f)
+    _metrics_writer.writerow(["time", "area", "polarisation_sd", "avg_wind_speed"])
+
+def convex_hull_area(points: np.ndarray) -> float:
+    """
+    Compute area of convex hull of 2D points using monotone chain.
+    points: (N, 2) array.
+    Returns 0.0 if fewer than 3 points.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.shape[0] < 3:
+        return 0.0
+
+    # Sort by x, then y
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    # Build lower hull
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(tuple(p))
+
+    # Build upper hull
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(tuple(p))
+
+    hull = lower[:-1] + upper[:-1]
+    if len(hull) < 3:
+        return 0.0
+
+    # Shoelace formula
+    hx = np.array([p[0] for p in hull])
+    hy = np.array([p[1] for p in hull])
+    return 0.5 * float(abs(np.dot(hx, np.roll(hy, -1)) - np.dot(hy, np.roll(hx, -1))))
+
+
+def heading_spread_sd(agents) -> float:
+    """
+    Polarisation-like metric:
+    SD of headings (in radians) around their circular mean.
+    Smaller value => better aligned flock.
+    """
+    if not agents:
+        return 0.0
+
+    thetas = np.deg2rad(np.array([a.psi for a in agents], dtype=float))
+    # circular mean
+    mean_angle = np.arctan2(np.sin(thetas).mean(), np.cos(thetas).mean())
+    # wrap differences into [-pi, pi]
+    diffs = np.angle(np.exp(1j * (thetas - mean_angle)))
+    return float(np.std(diffs))
 # --- Helper functions used in init/state handling ---
 
 def _initialize_random_agent_states(sim, rng, domain_half=DOMAIN_SIZE):
@@ -274,7 +353,7 @@ if __name__ == "__main__":
     )
 
     rng = np.random.default_rng(SEED)
-
+    init_metrics_logger()
     # Spawn agents at random, deterministically from SEED
     _initialize_random_agent_states(sim, rng, domain_half=DOMAIN_SIZE)
 
@@ -307,23 +386,40 @@ if __name__ == "__main__":
         seed=SEED,
     )
 
-    plotter = WindPlotter(
-        simulator=sim,
-        wind_field=sim.wind_field,
-        SIZE=int(DOMAIN_SIZE),
-        show_wind=True,
-        show_waypoints=False,        # no global aggregation goal here
-        show_agent_targets=False,
-        show_agent_status=SHOW_STATUS,
-    )
+    plotter = None
+    if not HEADLESS:
+        plotter = WindPlotter(
+            simulator=sim,
+            wind_field=sim.wind_field,
+            SIZE=int(DOMAIN_SIZE),
+            show_wind=True,
+            show_waypoints=False,        # no global aggregation goal here
+            show_agent_targets=False,
+            show_agent_status=SHOW_STATUS,
+        )
 
     # Optional periodic printing
     PRINT_PERIOD = float(os.environ.get("SWARM_PRINT_PERIOD", "1.0"))
     state_print_last = [-1e9]
 
+    # Metrics sampling (once per METRICS_PERIOD seconds)
+    metrics_last_time = [-1e9]
+
     def simulation_callback():
+        # Stop simulation after T_MAX seconds
+        t_now = getattr(sim, "time", 0.0)
+        if t_now >= T_MAX:
+            if not HEADLESS:
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close('all')
+                except Exception:
+                    pass
+            return
+
         # Step dynamics (positions/heading updated according to previous cmd_heading)
         sim.tick()
+        t = getattr(sim, "time", 0.0)
 
         # Share current poses for flocking + collision avoidance
         from .sensors.collision_avoidance import CollisionAvoidance as _CA
@@ -352,7 +448,28 @@ if __name__ == "__main__":
             msg = str(agent.nav) if hasattr(agent, "nav") else ""
             if not hasattr(agent, "last_msg") or agent.last_msg != msg:
                 agent.last_msg = msg
+        
+        # --- Metrics: flock area + polarisation-like spread + avg wind speed ---
+        # Only log once per METRICS_PERIOD seconds
+        if _metrics_writer is not None and (t - metrics_last_time[0]) >= METRICS_PERIOD:
+            positions = np.array([[a.pos[0], a.pos[1]] for a in sim.agents], dtype=float)
+            area = convex_hull_area(positions)
+            pol_sd = heading_spread_sd(sim.agents)  # smaller => more aligned
 
+            # Average wind speed at agent positions
+            wind_speeds = []
+            for a in sim.agents:
+                wx, wy = sim.wind_field.get_wind_at_position(
+                    [a.pos[0], a.pos[1], 0.0],
+                    t,
+                )
+                wind_speeds.append(np.hypot(wx, wy))
+            avg_wind = float(np.mean(wind_speeds)) if wind_speeds else 0.0
+
+            _metrics_writer.writerow(
+                [f"{t:.3f}", f"{area:.6f}", f"{pol_sd:.6f}", f"{avg_wind:.6f}"]
+            )
+            metrics_last_time[0] = t
         # Hard clamp: keep agents inside square [-DOMAIN_SIZE, DOMAIN_SIZE]
         for a in sim.agents:
             if a.pos[0] > DOMAIN_SIZE:
@@ -365,12 +482,17 @@ if __name__ == "__main__":
                 a.pos[1] = -DOMAIN_SIZE
 
         # Optional: periodic state dump
-        t = getattr(sim, "time", 0.0)
-        if t - state_print_last[0] >= PRINT_PERIOD:
-            print(f"t={t:.1f}s | agent states (flocking):")
-            for a in sim.agents:
-                print("  " + _agent_state_line(a))
-            state_print_last[0] = t
+        # (uses t defined earlier in this callback)
+        # if t - state_print_last[0] >= PRINT_PERIOD:
+        #     print(f"t={t:.1f}s | agent states (flocking):")
+        #     for a in sim.agents:
+        #         print("  " + _agent_state_line(a))
+        #     state_print_last[0] = t
 
-    # Start interactive plot loop
-    plotter.update_plot(callback=simulation_callback)
+    if HEADLESS:
+        # Headless / batch mode: no plotting, just advance the simulation
+        while getattr(sim, "time", 0.0) < T_MAX:
+            simulation_callback()
+    else:
+        # Start interactive plot loop
+        plotter.update_plot(callback=simulation_callback)
