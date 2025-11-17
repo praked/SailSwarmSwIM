@@ -26,7 +26,10 @@ from functools import reduce
 
 # ------------------- Config -------------------
 
-FILE_PATTERN_DEFAULT = str(BASE_DIR / "experiment_day2_5" / "run??.csv")
+# Root directory that contains experiment folders like:
+#   experiment_day2_*, experimentday3_*
+ANALYSIS_DIR = BASE_DIR / "analysis"
+ANALYSIS_DIR.mkdir(exist_ok=True)
 
 FIG_WIDTH = 6.0
 FIG_HEIGHT = 7.5
@@ -56,7 +59,7 @@ def load_and_merge(pattern: str) -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(f"No files found matching pattern: {pattern}")
 
-    print(f"Combining {len(files)} files:")
+    print(f"Combining {len(files)} files for pattern: {pattern}")
     for f in files:
         print("  ", f)
 
@@ -123,7 +126,7 @@ def plot_stats(stats: dict, n_runs: int, out_prefix: str):
         label="±1 SD",
     )
     ax.set_ylabel("Flock area [arb. units]")
-    ax.set_title(f"Flocking metrics ({n_runs} runs) with ZOO = 20.0")
+    ax.set_title(f"Flocking metrics ({n_runs} runs)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", frameon=False)
 
@@ -167,14 +170,49 @@ def plot_stats(stats: dict, n_runs: int, out_prefix: str):
 
 
 def main():
-    pattern = sys.argv[1] if len(sys.argv) > 1 else FILE_PATTERN_DEFAULT
+    # Collect experiment folders:
+    #   - experiment_day2_*
+    #   - experimentday3_*
+    exp_dirs = []
 
-    merged, files = load_and_merge(pattern)
-    stats = compute_stats(merged)
+    exp_dirs.extend(sorted(BASE_DIR.glob("experiment_day2_*")))
+    exp_dirs.extend(sorted(BASE_DIR.glob("experimentday3_*")))
 
-    # Use a simple prefix based on pattern or first file
-    prefix = pathlib.Path(files[0]).stem.split("_")[0]  # e.g. "run0" -> "run0"
-    plot_stats(stats, n_runs=len(files), out_prefix=prefix)
+    if not exp_dirs:
+        raise FileNotFoundError("No experiment directories found matching 'experiment_day2_*' or 'experimentday3_*'")
+
+    print("Found experiment directories:")
+    for d in exp_dirs:
+        print("  ", d)
+
+    for exp_dir in exp_dirs:
+        if not exp_dir.is_dir():
+            continue
+
+        print(f"\nProcessing experiment folder: {exp_dir}")
+
+        # Expect run01.csv .. run10.csv (or run??.csv in general)
+        pattern = str(exp_dir / "run??.csv")
+
+        try:
+            merged, files = load_and_merge(pattern)
+        except FileNotFoundError as e:
+            print(f"  Skipping {exp_dir}: {e}")
+            continue
+
+        stats = compute_stats(merged)
+
+        # Local output prefix: inside the experiment folder
+        local_prefix = str(exp_dir / exp_dir.name)
+
+        # Common analysis prefix: inside ANALYSIS_DIR, named after the experiment folder
+        analysis_prefix = str(ANALYSIS_DIR / exp_dir.name)
+
+        # Plot into experiment folder
+        plot_stats(stats, n_runs=len(files), out_prefix=local_prefix)
+
+        # Plot into analysis folder
+        plot_stats(stats, n_runs=len(files), out_prefix=analysis_prefix)
 
 
 if __name__ == "__main__":
