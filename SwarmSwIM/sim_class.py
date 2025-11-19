@@ -32,6 +32,7 @@ class Simulator():
             self.rnd = np.random.default_rng(self.environment['seed'])
         else:
             self.rnd = np.random.default_rng()
+
         # initialize file agents
         self.agents_from_file(sim_xml)
 
@@ -77,7 +78,7 @@ class Simulator():
         if self.environment.get('is_waypoints', False):
             self.waypoints = self.environment['waypoints']
         
-    def agents_from_file(self,sim_xml):
+    def agents_from_file(self, sim_xml):
         ''' Load agents based on simulation XML specification'''
         data = sim_functions.parse_agents(sim_xml)
         for key, value in data.items():

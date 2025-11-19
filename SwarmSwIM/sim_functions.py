@@ -4,11 +4,24 @@ import os
 
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
+
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))           # +/- range drawn by WindPlotter
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):
-# Split the text into rows and then convert each row to a list of floats
+    # Split the text into rows and then convert each row to a list of floats
     matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
+    return np.squeeze(matrix)
+
+def generate_matrix(agent_count):
+    # Generate a random position matrix with planar pos (x, y) between -20, 20,
+    # z == 1 and psi from 0, 360
+    spawn_domain = 2.0 * DOMAIN_SIZE - 2.0
+    matrix = np.column_stack([
+        np.round((spawn_domain * np.random.random_sample((agent_count, 2)) - DOMAIN_SIZE), 1),
+        np.ones((agent_count, 1)),
+        np.random.randint(0, 360, (agent_count, 1))
+    ])
     return np.squeeze(matrix)
 
 def get_sim_xml_path(input_path):
@@ -162,8 +175,17 @@ def parse_agents(input_path):
             filename = agent_type.find("description").text 
             dir_name = os.path.dirname(path)
             filename = os.path.join(dir_name,filename)
-            nametype = agent_type.find("name").text 
-            states = parse_matrix(agent_type.find('state'))
+            nametype = agent_type.find("name").text
+
+            # EITHER Generate states randomly
+            if (agent_type.find("randomized-pos").text == 'true'):
+                agent_count = int(agent_type.find("rand-pos-agent-count").text)
+                print("randomized-pos true, generating random positions for", agent_count, "agents")
+                states = generate_matrix(agent_count)
+            # OR Import states from xml
+            else:
+                states = parse_matrix(agent_type.find('state'))
+
             # Handle single element case
             if 1==states.ndim: states=np.array([states])
             # Handle no element case
