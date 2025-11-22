@@ -121,7 +121,7 @@
             <name>A</name>
 
             <!-- EITHER Enable/Disable randomized poses -->
-            <randomized-pos>true</randomized-pos>
+            <randomized-pos>false</randomized-pos>
             <!-- Count of agents with random poses -->
             <rand-pos-agent-count>10</rand-pos-agent-count>
 
@@ -129,7 +129,15 @@
             <state>
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->
-                <!-- -20  -20.0  1.0  -45.0 -->
+                -20  -20.0  1.0  -45.0
+                -20  -20.0  1.0  0.0
+                -20  -20.0  1.0  90.0
+                -20  -20.0  1.0  -90.0
+                -20  -20.0  1.0  -75.0
+                -20  -20.0  1.0  -33.0
+                -20  -20.0  1.0  180.0
+                -20  -20.0  1.0  120.0
+                -20  -20.0  1.0  10.0
                 <!-- -21.0  -22.0  1.0  35.0
                 -10.0 -10.0 1.0 46.0
                 20.0 0.0 1.0 57.1 -->
