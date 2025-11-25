@@ -226,29 +226,6 @@ if __name__ == "__main__":
             wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
             agent.update(wind_vec)
 
-
-
-    """def execute_control(agent):
-        target_pos = dispersion.step(agent)
-
-        if target_pos is not None:
-            agent.nav.wp.set_transient_target({
-                "x": target_pos[0],
-                "y": target_pos[1],
-                "name": "Cell"      #TODO: evt naming of cells
-            })
-
-            agent.viz_target = {"x": target_pos[0],"y": target_pos[1]}
-            agent.nav.status = f"AUC: {target_pos[0]:.0f},{target_pos[1]:.0f}"
-        else:
-            # Standard behaviour if no cell found/still bidding; continue path
-            agent.cmd_heading = getattr(agent, "cmd_heading", agent.psi)
-            agent.nav.status = "AUC: Bidding..."
-
-
-        wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
-        agent.update(wind_vec)"""
-
     plotter.update_plot(callback=simulation_callback)
 
     
