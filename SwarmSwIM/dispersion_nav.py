@@ -35,6 +35,18 @@ def _initialize_agents(sim):
             a.nav.wp.clear()
 
 class DispersionController:
+    """
+    Simple dispersion controller dividing the domain into cells.
+    Each agent holds a list of all cells, targets are selected and
+    negotiated with neighbors via a bidding-system.
+
+    PHASE 1: Read all incoming messages and update winners in internal list
+    PHASE 2: Select target cell (currently first cell that is won).
+        Fallback: evaluate all cells and take best (nearest with no known winner)
+    PHASE 3: Broadcast internal list ("locally updated" or fallback)
+    PHASE 4: Return selected target
+    """
+
     def __init__(self, sim, comm, domain_size):
         self.sim = sim
         self.comm = comm
@@ -51,6 +63,9 @@ class DispersionController:
             }
 
     def _generate_grid_targets(self, n_agents, d_size):
+        """Divide domain into grid-cells, depending on amount of agents.
+        Set center of the cells as targets for dispersion"""
+
         side = np.sqrt(n_agents)
         rows = int(np.floor(side))
         cols = int(np.ceil(n_agents / rows))
@@ -68,6 +83,8 @@ class DispersionController:
         return targets
 
     def step(self, agent):
+        """
+        """
         my_mem = self.agent_memory[agent.name]
         my_pos = agent.pos[0:2]
 
@@ -125,11 +142,11 @@ class DispersionController:
         # PHASE 3: broadcasting results
         self.comm.broadcast(agent, {'auction_data': my_mem})
 
-        # PHASE 4: output target
+        # PHASE 4: return target
         if my_cell_idx is not None:
             return self.targets[my_cell_idx]
         return None
-        # TODO: Select any cell if no result from above for iterations
+        # TODO: Check if it's possible that there is still no cell assigned at this point
 
 
 # --- Main script entry point ---
