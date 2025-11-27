@@ -35,7 +35,7 @@ def _initialize_agents(sim):
             a.nav.wp.clear()
 
 class DispersionController:
-    """
+    """TODO: Update description of phases
     Simple dispersion controller dividing the domain into cells.
     Each agent holds a list of all cells, targets are selected and
     negotiated with neighbors via a bidding-system.
@@ -97,7 +97,7 @@ class DispersionController:
             for cell_id, nbr_bid in neighbor_auction.items():
                 curr_bid = my_mem[cell_id]
 
-                # Neighbor has lower bid
+                # Update entry if neighbor has lower bid
                 if nbr_bid['cost'] < curr_bid['cost'] - 1e-6:
                     my_mem[cell_id] = nbr_bid.copy()
                 # Bids are (nearly) equal -> Tiebreaking by name (lexicographic)
@@ -105,20 +105,58 @@ class DispersionController:
                     if nbr_bid['winner'] is not None and (curr_bid['winner'] is None or nbr_bid['winner'] < curr_bid['winner']):
                         my_mem[cell_id] = nbr_bid.copy()
 
-        # PHASE 2: bidding
+
+        # PHASE 2: update cells with own distances if not won by another, claim wins from update phase
+        my_cell_idx = None
+        best_cell = None
+        best_cost = float('inf')
+
+        for cell_id, bid in my_mem.items():
+            target_pos = self.targets[cell_id]
+            dist = np.linalg.norm(target_pos - my_pos)
+
+            # If noone has claimed this cell or own cost is lower than the claimed
+            if bid['winner'] is None or bid['cost'] > dist:
+                # best_cell is the one won with lowest costs
+                if dist < best_cost:
+                    best_cost = dist
+                    best_cell = cell_id
+
+        # Update cell entry for best_cell (claim)
+        if best_cell is not None:
+            my_mem[best_cell] = {'cost': best_cost, 'winner': agent.name}
+            my_cell_idx = best_cell
+
+        '''
+        # PHASE 3: bidding
         # Check if winning a cell
         my_cell_idx = None
+        best_cell = None
+        best_cost = float('inf')
+
         for cell_id, bid in my_mem.items():
             if bid['winner'] == agent.name:
-                my_cell_idx = cell_id
-                dist = np.linalg.norm(self.targets[cell_id] - my_pos)
-                my_mem[cell_id]['cost'] = dist
-                break
+                # Calculate dist to cell and decide if it's the best one
+                target_pos = self.targets[cell_id]
+                dist = np.linalg.norm(target_pos - my_pos)
+
+                if dist < best_cost:
+                    best_cost = dist
+                    best_cell = cell_id
+
+                #my_cell_idx = cell_id
+                #my_mem[cell_id]['cost'] = dist
+                #break
                 # Currently using break -> selecting the first cell if there are multiple cells where the same agent is winner
                 # TODO: Celect cell by cost (dist) or cell with lowest count of other bidders
 
+        if best_cell is not None:
+            my_mem[best_cell] = {'cost': best_cost, 'winner': agent.name}
+            my_cell_idx = best_cell'''
+
         # Bidding fails (lost bid or no cell available)
-        if my_cell_idx is None:
+        #else:
+        if best_cell is None:
             best_cell = None
             best_bid_margin = -1.0
 
@@ -135,18 +173,19 @@ class DispersionController:
 
             # take best_cell and bid
             if best_cell is not None:
-                dist = np.linalg.norm(self.targets[best_cell] - my_pos)
+                target_pos = self.targets[best_cell]
+                dist = np.linalg.norm(target_pos - my_pos)
+
                 my_mem[best_cell] = {'cost': dist, 'winner': agent.name}
                 my_cell_idx = best_cell
 
-        # PHASE 3: broadcasting results
+        # PHASE 4: broadcasting results
         self.comm.broadcast(agent, {'auction_data': my_mem})
 
-        # PHASE 4: return target
+        # PHASE 5: return target
         if my_cell_idx is not None:
             return self.targets[my_cell_idx]
         return None
-        # TODO: Check if it's possible that there is still no cell assigned at this point
 
 
 # --- Main script entry point ---
@@ -179,11 +218,20 @@ if __name__ == "__main__":
         domain_size=DOMAIN_SIZE,
     )
 
+    # Visualise center of gridcells as waypoints
+    sim.waypoints = [
+        {"x": float(t[0]), "y": float(t[1]), "name": f"{i}"} 
+        for i, t in enumerate(dispersion.targets)
+    ]
+
     plotter = WindPlotter(
         simulator=sim,
         wind_field=sim.wind_field,
         SIZE=int(DOMAIN_SIZE),
         show_wind=True,
+        show_waypoints=True,
+        show_agent_targets=True,
+        show_agent_status=True,
     )
 
     def simulation_callback():
@@ -192,7 +240,9 @@ if __name__ == "__main__":
         comm.step_time(sim.Dt)
 
         for agent in sim.agents:
-            #execute_control(agent)
+
+            wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
+            agent.update(wind_vec)
 
             target_pos = dispersion.step(agent)
 
@@ -201,8 +251,9 @@ if __name__ == "__main__":
                 dist_to_target = np.linalg.norm(target_pos - agent.pos[0:2])
 
                 # agent arrived at cell; stop setting transient waypoint and loiter
-                if dist_to_target <= loiter_radius:
-                    agent.nav.status = f"AUC: LOITERING ({dist_to_target:.1f}m)"
+                if dist_to_target <= loiter_radius and agent.nav.is_loitering:
+                    if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
+                        agent.nav.status = f"LOITERING [{agent.nav.pattern}]({dist_to_target:.1f}m)"
 
                 # agent ha not yet arrived; continue setting transient waypoint
                 else:
@@ -213,18 +264,17 @@ if __name__ == "__main__":
                     })
 
                     agent.viz_target = {"x": target_pos[0],"y": target_pos[1]}
-                    agent.nav.status = f"AUC: {target_pos[0]:.0f},{target_pos[1]:.0f}"
-            else:
+                    if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
+                        agent.nav.status = f"AUC: {target_pos[0]:.0f},{target_pos[1]:.0f}"
+
+            elif hasattr(agent, "nav") and hasattr(agent.nav, "status"):
                 # Standard behaviour if no cell found/still bidding; continue path
-                #agent.cmd_heading = getattr(agent, "cmd_heading", agent.psi)
-                agent.nav.status = "AUC: Bidding..."
+                agent.cmd_heading = getattr(agent, "cmd_heading", agent.psi)
+                agent.nav.status = "Fallback: Bidding..."
 
             agent_nav_msg = str(agent.nav)
             if agent_nav_msg != agent.last_msg:
                 agent.last_msg = agent_nav_msg
-
-            wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
-            agent.update(wind_vec)
 
     plotter.update_plot(callback=simulation_callback)
 

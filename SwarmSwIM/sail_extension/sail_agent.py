@@ -303,10 +303,10 @@ class TackingNavigation(SailNavigation):
         r = max(self.loiter_r_min, min(self.loiter_r_max, r))
 
         # Choose path pattern
-        pattern = os.environ.get("SWARM_STATION_PATTERN", "circling").lower()
+        self.pattern = os.environ.get("SWARM_STATION_PATTERN", "circling").lower()
         t = agent.internal_clock
         theta = self.loiter_omega * t
-        if pattern.startswith("circ"):
+        if self.pattern.startswith("circ"):
             # Circle
             x_local = r * np.cos(theta)
             y_local = r * np.sin(theta)
@@ -339,7 +339,7 @@ class TackingNavigation(SailNavigation):
 
         # Drive the agent using a transient target, but DO NOT change center
         self.wp.set_transient_target({"name": target_name, "x": target_x, "y": target_y})
-        self.status = f"LOITER[{pattern}] r={r:.1f} leash={max_drift:.1f} -> ({target_x:.1f},{target_y:.1f})"
+        self.status = f"LOITER[{self.pattern}] r={r:.1f} leash={max_drift:.1f} -> ({target_x:.1f},{target_y:.1f})"
 
         # Force hold the target, because waypoint_tolerance > Radii
         self.wp.set_hold(True)

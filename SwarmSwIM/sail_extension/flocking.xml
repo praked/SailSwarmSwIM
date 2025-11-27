@@ -121,7 +121,7 @@
             <name>A</name>
 
             <!-- EITHER Enable/Disable randomized poses -->
-            <randomized-pos>false</randomized-pos>
+            <randomized-pos>true</randomized-pos>
             <!-- Count of agents with random poses -->
             <rand-pos-agent-count>10</rand-pos-agent-count>
 
