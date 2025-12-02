@@ -46,7 +46,7 @@ class SailAgent(Agent):
 class WaypointPlanner:
     """Manages sequential waypoint navigation and completion tracking"""
 
-    def __init__(self, waypoint_tolerance=15.0):
+    def __init__(self, waypoint_tolerance=5.0): #originally 15.0
         """
         Args:
             waypoint_tolerance: distance in meters where an agent is said to have completed a waypoint
@@ -157,7 +157,7 @@ class WaypointPlanner:
 class SailNavigation:
     """Navigation behavior tree for waypoint following, station-keeping, etc."""
 
-    def __init__(self, waypoint_tolerance=15.0):
+    def __init__(self, waypoint_tolerance=5.0): #originally 15.0
         """Navigation system using composition with WaypointPlanner
 
         Args:
@@ -204,7 +204,7 @@ class SailNavigation:
 
 
 class TackingNavigation(SailNavigation):
-    def __init__(self, Dt=0.1, waypoint_tolerance=15.0, tack_duration=20.0):
+    def __init__(self, Dt=0.1, waypoint_tolerance=15.0, tack_duration=20.0): #waypoint_tolerance originally 15.0
         """Tacking navigation
 
         Args:
@@ -225,6 +225,7 @@ class TackingNavigation(SailNavigation):
         self.loiter_omega = float(os.environ.get('SWARM_LOITER_OMEGA', '0.4'))  # rad/s
         self.loiter_center = None  # dict with keys x,y
         self.is_loitering = False # locks agent into loitering mode
+        self.fallback = False # Prevents locking into loitering mode while in fallback mode
 
 
         super().__init__(waypoint_tolerance)
@@ -249,17 +250,19 @@ class TackingNavigation(SailNavigation):
         # LOITERING logic
         # If loitering, stay in loiter mode
         if self.is_loitering:
+            #print("Agent: ", agent.name, "is now loitering at: ", self.wp.waypoints, self.loiter_center)
             self.station_keep(agent, true_wind)
             return
 
         # Coming from transient target (sequence of length >= 1) and with no waypoint set into loiter mode
-        if self.wp.target_waypoint is None and len(self.wp.waypoints) >= 1:
+        if self.wp.target_waypoint is None and len(self.wp.waypoints) >= 1 and not self.fallback:
             center_coords = self._capture_last_target_coords()
 
             if center_coords is not None:
                 # Commit into loitering mode and clear all waypoints
                 self.loiter_center = center_coords
                 self.is_loitering = True
+                #print("Agent: ", agent.name, "is setting loitering to True, waypoints: ", self.wp.waypoints)
                 self.wp.waypoints = []
 
                 self.station_keep(agent, true_wind)
@@ -268,11 +271,13 @@ class TackingNavigation(SailNavigation):
         if self.wp.target_waypoint is not None:
             # Continue waypoint navigation
             self.navigate_to_waypoint(agent, true_wind)
+            self.fallback = False
         else:
             # Fallback
             # Maintain current position as target until a real waypoint appears.
             # Store as a dict instead of a numpy array to avoid ambiguous truth-value
             # comparisons inside WaypointPlanner (np.array == np.array -> array of bools).
+            self.fallback = True
             self.wp.set_transient_target({
                 "x": float(agent.pos[0]),
                 "y": float(agent.pos[1]),
