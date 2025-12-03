@@ -5,7 +5,7 @@ import os
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
 
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))           # +/- range drawn by WindPlotter
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "20.0"))           # +/- range drawn by WindPlotter
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):

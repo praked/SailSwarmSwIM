@@ -12,11 +12,21 @@ from .sensors.collision_avoidance import CollisionAvoidance
 SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", "true", "yes", "on")
 
 SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
-NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS", "5.0"))
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "70.0"))
+NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS", "10.0"))     # comm radius in meters (sim units)
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "20.0"))         # +/- range drawn by WindPlotter
 
-BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))
-BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))
+BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))        # strength of "push" back inside
+BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))    # soft wall thickness in meters
+
+# Collision avoidance
+SAFE_RADIUS = float(os.environ.get("SWARM_CA_SAFE_RADIUS", "4.0"))
+CPA_HORIZON = float(os.environ.get("SWARM_CA_HORIZON", "12.0"))
+AVOID_BIAS_MAX = float(os.environ.get("SWARM_CA_BIAS_MAX", "90.0"))       # deg
+CA_TIE_MODE = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()
+CA_DWELL = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
+
+ENABLE_CRASH_LOGGING = False    # set this to True if you want to be informed when two boats crash
+CRASH_DIST = float(os.environ.get("SWARM_CA_COLLISION_DIST", "0.5"))    # max dist between to boats that is defined as crash
 
 
 def _initialize_agents(sim):
@@ -35,12 +45,23 @@ def _initialize_agents(sim):
         if hasattr(a, "nav") and hasattr(a.nav, "wp") and hasattr(a.nav.wp, "clear"):
             a.nav.wp.clear()
 
-class SocialSteeringController:
+def _detect_crash(agent, crash_dist=CRASH_DIST):
+    my_pose = ca._pose_of(agent)
+    my_pos = np.array([my_pose["x"], my_pose["y"]], dtype=float)
+
+    for nbr, st in ca.comm.read_neighbor_poses(agent):
+        nbr_pos = np.array([st["x"], st["y"]], dtype=float)
+        dist = np.linalg.norm(nbr_pos - my_pos)
+
+        if dist < crash_dist:
+            print("CRASH between", agent.name, "and", nbr.name)
+
+class BoundarySteeringController:
     def __init__(
         self,
         domain_size,
         boundary_gain,
-        boundary_margin
+        boundary_margin,
     ):
         # Domain boundaries
         self.domain_size = float(domain_size)
@@ -92,28 +113,29 @@ class SocialSteeringController:
             return None
         return v / n
     
-    def applyBoundary(self, agent):
+    def applyBoundarySteering(self, agent):
         cmd_rad = np.radians(agent.cmd_heading)
         cmd_vec = np.array([np.cos(cmd_rad), np.sin(cmd_rad)])
         my_pos = agent.pos
 
-        # Apply soft-boundary steering if necessary
-        bvec = socSteering._boundary_vec(my_pos)     #boundary_gain already applied
+        # Get soft-boundary steering vector
+        bvec = bSteering._boundary_vec(my_pos)     #boundary_gain already applied
 
+        # Apply boundary avoidance if necessary
         if bvec is not None:
             cmd_vec = cmd_vec + bvec * self.bound_gain
+            # Update status string
             if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
-                        agent.nav.status = f"Avoiding boundary: +{np.degrees(np.arctan2(bvec[1], bvec[0])) % 360.0}°"
+                agent.nav.status = f"Avoiding boundary: +{np.degrees(np.arctan2(bvec[1], bvec[0])) % 360.0}°"
 
         cmd_vec = self._norm(cmd_vec)
 
         if cmd_vec is None:
             return agent.cmd_heading
         
-        soc_heading = np.degrees(np.arctan2(cmd_vec[1], cmd_vec[0])) % 360.0
+        b_heading = np.degrees(np.arctan2(cmd_vec[1], cmd_vec[0])) % 360.0
         
-
-        return soc_heading
+        return b_heading
 
 
 
@@ -396,10 +418,21 @@ if __name__ == "__main__":
         domain_size=DOMAIN_SIZE,
     )
 
-    socSteering = SocialSteeringController(
+    bSteering = BoundarySteeringController(
         domain_size=DOMAIN_SIZE,
         boundary_gain=BOUNDARY_GAIN,
-        boundary_margin=BOUNDARY_MARGIN,        
+        boundary_margin=BOUNDARY_MARGIN,       
+    )
+
+    # Collision avoidance module
+    ca = CollisionAvoidance(
+        comm,
+        safe_radius=SAFE_RADIUS,
+        horizon=CPA_HORIZON,
+        bias_max_deg=AVOID_BIAS_MAX,
+        tie_mode=CA_TIE_MODE,
+        dwell=CA_DWELL,
+        seed=SEED,
     )
 
     # Visualise center of gridcells as waypoints
@@ -419,6 +452,12 @@ if __name__ == "__main__":
     )
 
     def simulation_callback():
+        crash_logging = ENABLE_CRASH_LOGGING
+
+        # Share current poses for flocking + collision avoidance
+        from .sensors.collision_avoidance import CollisionAvoidance as _CA
+        for a in sim.agents:
+            comm.broadcast_pose(a, _CA._pose_of(a))
 
         for agent in sim.agents:
             
@@ -457,8 +496,19 @@ if __name__ == "__main__":
                 agent.cmd_heading = getattr(agent, "cmd_heading", agent.psi)
                 agent.nav.status = "Fallback: Bidding..."
 
-            # Alter command heading by social steering, eg: if near boundary
-            agent.cmd_heading = socSteering.applyBoundary(agent)
+            # Alter command heading by boundary steering
+            agent.cmd_heading = bSteering.applyBoundarySteering(agent)
+
+            # Get heading by collision avoidance steering
+            ca_heading = ca.suggest_heading(agent, agent.cmd_heading)
+            # Apply CA heading if different from original cmd_heading
+            if abs(agent.cmd_heading - ca_heading) > 1e-6:
+                if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
+                        agent.nav.status += "CA"
+                agent.cmd_heading = ca_heading
+
+            if crash_logging:
+                _detect_crash(agent)
 
             agent_nav_msg = str(agent.nav)
             if agent_nav_msg != agent.last_msg:
