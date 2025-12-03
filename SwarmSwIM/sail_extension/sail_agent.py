@@ -204,7 +204,7 @@ class SailNavigation:
 
 
 class TackingNavigation(SailNavigation):
-    def __init__(self, Dt=0.1, waypoint_tolerance=15.0, tack_duration=20.0): #waypoint_tolerance originally 15.0
+    def __init__(self, Dt=0.1, waypoint_tolerance=5.0, tack_duration=20.0): #waypoint_tolerance originally 15.0
         """Tacking navigation
 
         Args:
@@ -250,7 +250,6 @@ class TackingNavigation(SailNavigation):
         # LOITERING logic
         # If loitering, stay in loiter mode
         if self.is_loitering:
-            #print("Agent: ", agent.name, "is now loitering at: ", self.wp.waypoints, self.loiter_center)
             self.station_keep(agent, true_wind)
             return
 
@@ -262,7 +261,6 @@ class TackingNavigation(SailNavigation):
                 # Commit into loitering mode and clear all waypoints
                 self.loiter_center = center_coords
                 self.is_loitering = True
-                #print("Agent: ", agent.name, "is setting loitering to True, waypoints: ", self.wp.waypoints)
                 self.wp.waypoints = []
 
                 self.station_keep(agent, true_wind)
