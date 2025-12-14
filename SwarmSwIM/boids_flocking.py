@@ -13,10 +13,21 @@ SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", 
 
 SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
 NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS", "20.0"))
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "40.0"))
 
 BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))
 BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))
+
+# Collision avoidance
+
+SAFE_RADIUS = float(os.environ.get("SWARM_CA_SAFE_RADIUS", "4.0"))
+CPA_HORIZON = float(os.environ.get("SWARM_CA_HORIZON", "12.0"))
+AVOID_BIAS_MAX = float(os.environ.get("SWARM_CA_BIAS_MAX", "90.0"))       # deg
+CA_TIE_MODE = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()
+CA_DWELL = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
+
+ENABLE_CRASH_LOGGING = True    # set this to True if you want to be informed when two boats crash
+CRASH_DIST = float(os.environ.get("SWARM_CA_COLLISION_DIST", "0.5"))    # max dist between to boats that is defined as crash
 
 
 def _initialize_agents(sim):
@@ -35,6 +46,16 @@ def _initialize_agents(sim):
         if hasattr(a, "nav") and hasattr(a.nav, "wp") and hasattr(a.nav.wp, "clear"):
             a.nav.wp.clear()
 
+def _detect_crash(agent, crash_dist=CRASH_DIST):
+    my_pose = ca._pose_of(agent)
+    my_pos = np.array([my_pose["x"], my_pose["y"]], dtype=float)
+
+    for nbr, st in ca.comm.read_neighbor_poses(agent):
+        nbr_pos = np.array([st["x"], st["y"]], dtype=float)
+        dist = np.linalg.norm(nbr_pos - my_pos)
+
+        if dist < crash_dist:
+            print("CRASH between", agent.name, "and", nbr.name)
 
 # --- Flocking controller (Reynolds' algorithm) ---
 
@@ -176,6 +197,9 @@ class BoidsFlockingController:
         bvec = self._boundary_vec((px, py))
         if bvec is not None:
             des_vec = np.add(des_vec, bvec)
+            # update status
+            if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
+                        agent.nav.status = f"avoiding boundary"
 
         desired_heading = np.degrees(np.arctan2(des_vec[1], des_vec[0])) % 360
         return desired_heading
@@ -199,6 +223,17 @@ if __name__ == "__main__":
     # Neighborhood communication
     comm = NeighborhoodComm(sim, NEIGHBOR_RADIUS)
 
+    # Collision avoidance module
+    ca = CollisionAvoidance(
+        comm,
+        safe_radius=SAFE_RADIUS,
+        horizon=CPA_HORIZON,
+        bias_max_deg=AVOID_BIAS_MAX,
+        tie_mode=CA_TIE_MODE,
+        dwell=CA_DWELL,
+        seed=SEED,
+    )
+
     boid = BoidsFlockingController(
         comm=comm,
         domain_half=DOMAIN_SIZE,
@@ -212,7 +247,8 @@ if __name__ == "__main__":
         SIZE=int(DOMAIN_SIZE),
         show_wind=True,
         show_waypoints=False,
-        show_agent_status=SHOW_STATUS,
+        show_agent_targets=False,
+        show_agent_status=True,
     )
 
     def simulation_callback():
@@ -232,6 +268,8 @@ if __name__ == "__main__":
                 agent.last_msg = agent_nav_msg
 
     def execute_control(agent):
+        crash_logging = ENABLE_CRASH_LOGGING
+
         wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
 
         agent.update(wind_vec)
@@ -243,9 +281,18 @@ if __name__ == "__main__":
         else:
             base_heading = desired_heading
 
-        # TODO: Colision avoidance could be applied here
-
         agent.cmd_heading = base_heading
+
+        # Get heading by collision avoidance steering
+        ca_heading = ca.suggest_heading(agent, agent.cmd_heading)
+        # Apply CA heading if different from original cmd_heading
+        if abs(agent.cmd_heading - ca_heading) > 1e-6:
+            if hasattr(agent, "nav") and hasattr(agent.nav, "status"):
+                    agent.nav.status += "CA"
+            agent.cmd_heading = ca_heading
+
+        if crash_logging:
+                _detect_crash(agent)
 
 
 
