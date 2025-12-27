@@ -5,7 +5,9 @@ import os
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
 
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "20.0"))           # +/- range drawn by WindPlotter
+SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
+
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "45.0"))           # +/- range drawn by WindPlotter
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):
@@ -16,6 +18,7 @@ def parse_matrix(element):
 def generate_matrix(agent_count):
     # Generate a random position matrix with planar pos (x, y) between -20, 20,
     # z == 1 and psi from 0, 360
+    np.random.seed(SEED)
     spawn_domain = 2.0 * DOMAIN_SIZE - 2.0
     matrix = np.column_stack([
         np.round((spawn_domain * np.random.random_sample((agent_count, 2)) - DOMAIN_SIZE), 1),

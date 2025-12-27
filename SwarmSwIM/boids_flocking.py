@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 import numpy as np
+from datetime import datetime
+import csv
 
 from SwarmSwIM import Simulator
 from .sail_extension.wind_plotter import WindPlotter
@@ -8,6 +10,12 @@ from .sensors.comm import NeighborhoodComm
 from .sensors.collision_avoidance import CollisionAvoidance
 
 # --- User-tunable parameters via environment variables ---
+
+# Max simulation time (seconds)
+T_MAX = float(os.environ.get("SWARM_T_MAX", "300.0"))
+
+# Headless / batch mode (no interactive matplotlib window)
+HEADLESS = os.environ.get("SWARM_HEADLESS", "0").strip().lower() in ("1", "true", "yes", "on")
 
 SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", "true", "yes", "on")
 
@@ -26,9 +34,62 @@ AVOID_BIAS_MAX = float(os.environ.get("SWARM_CA_BIAS_MAX", "90.0"))       # deg
 CA_TIE_MODE = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()
 CA_DWELL = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
 
-ENABLE_CRASH_LOGGING = True    # set this to True if you want to be informed when two boats crash
-CRASH_DIST = float(os.environ.get("SWARM_CA_COLLISION_DIST", "0.5"))    # max dist between to boats that is defined as crash
+ENABLE_CRASH_LOGGING = os.environ.get("SWARM_CRASH_LOGGING", "0").strip().lower() in ("1", "true", "yes", "on")    # set this to True if you want to be informed when two boats crash
+CRASH_DIST = float(os.environ.get("SWARM_CA_COLLISION_DIST", "0.25"))    # max dist in m between to boats that is defined as crash
 
+# Metrics logging period (seconds)
+METRICS_PERIOD = float(os.environ.get("SWARM_METRICS_PERIOD", "1.0"))
+
+METRICS_FILE = os.environ.get(
+    "SWARM_METRICS_FILE",
+    f"flocking_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+)
+
+_metrics_writer = None
+def init_metrics_logger():
+    global _metrics_writer
+    f = open(METRICS_FILE, "w", newline="")
+    _metrics_writer = csv.writer(f)
+    _metrics_writer.writerow(["time", "area"])
+
+def convex_hull_area(points: np.ndarray) -> float:
+    """
+    Compute area of convex hull of 2D points using monotone chain.
+    points: (N, 2) array.
+    Returns 0.0 if fewer than 3 points.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.shape[0] < 3:
+        return 0.0
+
+    # Sort by x, then y
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    # Build lower hull
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(tuple(p))
+
+    # Build upper hull
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(tuple(p))
+
+    hull = lower[:-1] + upper[:-1]
+    if len(hull) < 3:
+        return 0.0
+
+    # Shoelace formula
+    hx = np.array([p[0] for p in hull])
+    hy = np.array([p[1] for p in hull])
+    return 0.5 * float(abs(np.dot(hx, np.roll(hy, -1)) - np.dot(hy, np.roll(hx, -1))))
 
 def _initialize_agents(sim):
     """Clear any existing waypoint plans."""
@@ -219,6 +280,7 @@ if __name__ == "__main__":
     """
 
     _initialize_agents(sim)
+    init_metrics_logger()
 
     # Neighborhood communication
     comm = NeighborhoodComm(sim, NEIGHBOR_RADIUS)
@@ -248,11 +310,15 @@ if __name__ == "__main__":
         show_wind=True,
         show_waypoints=False,
         show_agent_targets=False,
-        show_agent_status=True,
+        show_agent_status=False,
     )
+
+    # Metrics sampling (once per METRICS_PERIOD seconds)
+    metrics_last_time = [-1e9]
 
     def simulation_callback():
         sim.tick()
+        t = getattr(sim, "time", 0.0)
 
         # Share current poses for flocking + collision avoidance
         from .sensors.collision_avoidance import CollisionAvoidance as _CA
@@ -266,6 +332,18 @@ if __name__ == "__main__":
             agent_nav_msg = str(agent.nav)
             if agent_nav_msg != agent.last_msg:
                 agent.last_msg = agent_nav_msg
+        
+        # --- Metrics: flock area ---
+        # Only log once per METRICS_PERIOD seconds
+        if _metrics_writer is not None and (t - metrics_last_time[0]) >= METRICS_PERIOD:
+            positions = np.array([[a.pos[0], a.pos[1]] for a in sim.agents], dtype=float)
+            area = convex_hull_area(positions)
+
+            _metrics_writer.writerow(
+                [f"{t:.3f}", f"{area:.6f}"]
+            )
+
+            metrics_last_time[0] = t
 
     def execute_control(agent):
         crash_logging = ENABLE_CRASH_LOGGING
@@ -295,5 +373,10 @@ if __name__ == "__main__":
                 _detect_crash(agent)
 
 
-
-    plotter.update_plot(callback=simulation_callback)
+    if HEADLESS:
+        # Headless / batch mode: no plotting, just advance the simulation
+        while getattr(sim, "time", 0.0) < T_MAX:
+            simulation_callback()
+    else:
+        # Start interactive plot loop
+        plotter.update_plot(callback=simulation_callback)

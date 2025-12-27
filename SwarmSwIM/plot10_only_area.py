@@ -32,7 +32,7 @@ ANALYSIS_DIR = BASE_DIR / "analysis"
 ANALYSIS_DIR.mkdir(exist_ok=True)
 
 FIG_WIDTH = 6.0
-FIG_HEIGHT = 7.5
+FIG_HEIGHT = 2.5
 DPI = 300
 
 FONT_SIZE_BASE = 10
@@ -48,8 +48,6 @@ plt.rcParams.update({
 })
 
 COLOR_AREA = "#0072B2"
-COLOR_POL = "#D55E00"
-COLOR_WIND = "#009E73"
 
 BAND_ALPHA = 0.2  # transparency for std band
 
@@ -69,8 +67,6 @@ def load_and_merge(pattern: str) -> pd.DataFrame:
         # rename columns to attach run index
         df = df.rename(columns={
             "area": f"area_{i}",
-            "polarisation_sd": f"pol_{i}",
-            "avg_wind_speed": f"wind_{i}",
         })
         dfs.append(df)
 
@@ -83,21 +79,13 @@ def compute_stats(merged: pd.DataFrame):
     time = merged["time"].values
 
     area_cols = [c for c in merged.columns if c.startswith("area_")]
-    pol_cols = [c for c in merged.columns if c.startswith("pol_")]
-    wind_cols = [c for c in merged.columns if c.startswith("wind_")]
 
     area_vals = merged[area_cols].values
-    pol_vals = merged[pol_cols].values
-    wind_vals = merged[wind_cols].values
 
     stats = {
         "time": time,
         "area_mean": np.mean(area_vals, axis=1),
         "area_std": np.std(area_vals, axis=1, ddof=1),
-        "pol_mean": np.mean(pol_vals, axis=1),
-        "pol_std": np.std(pol_vals, axis=1, ddof=1),
-        "wind_mean": np.mean(wind_vals, axis=1),
-        "wind_std": np.std(wind_vals, axis=1, ddof=1),
     }
     return stats
 
@@ -108,9 +96,6 @@ def parse_params_from_readme(readme_path: pathlib.Path) -> str | None:
     Parse a short parameter string from a README.md file in an experiment folder.
 
     Expected lines (from ScriptFlocking.sh):
-    - SWARM_ZOR (repulsion radius):   VALUE
-    - SWARM_ZOO (orientation radius): VALUE
-    - SWARM_ZOA (attraction radius):  VALUE
     - SWARMSWIM_DOMAIN (half-size):   VALUE
     - SWARM_T_MAX (duration):         VALUE s
     """
@@ -122,13 +107,7 @@ def parse_params_from_readme(readme_path: pathlib.Path) -> str | None:
         with readme_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("- SWARM_ZOR"):
-                    params["ZOR"] = line.split(":", 1)[1].strip()
-                elif line.startswith("- SWARM_ZOO"):
-                    params["ZOO"] = line.split(":", 1)[1].strip()
-                elif line.startswith("- SWARM_ZOA"):
-                    params["ZOA"] = line.split(":", 1)[1].strip()
-                elif line.startswith("- SWARMSWIM_DOMAIN"):
+                if line.startswith("- SWARMSWIM_DOMAIN"):
                     params["DOMAIN"] = line.split(":", 1)[1].strip()
                 elif line.startswith("- SWARM_T_MAX"):
                     val = line.split(":", 1)[1].strip()
@@ -143,12 +122,6 @@ def parse_params_from_readme(readme_path: pathlib.Path) -> str | None:
 
     # Build a compact one-line description
     parts = []
-    if "ZOR" in params:
-        parts.append(f"ZOR={params['ZOR']}")
-    if "ZOO" in params:
-        parts.append(f"ZOO={params['ZOO']}")
-    if "ZOA" in params:
-        parts.append(f"ZOA={params['ZOA']}")
     if "DOMAIN" in params:
         parts.append(f"DOMAIN SIZE={params['DOMAIN']}")
     if "T_MAX" in params:
@@ -161,14 +134,15 @@ def plot_stats(stats, n_runs, out_prefix, exp_name=None, param_info=None):
     time = stats["time"]
 
     fig, axes = plt.subplots(
-        nrows=3,
+        nrows=1,
         ncols=1,
         sharex=True,
         figsize=(FIG_WIDTH, FIG_HEIGHT),
         constrained_layout=True,
     )
+    print(axes)
     # Set x-axis major ticks every 15 time units (shared across all subplots)
-    axes[-2].yaxis.set_major_locator(MultipleLocator(0.25))
+    #axes.yaxis.set_major_locator(MultipleLocator(0.25))
     # Build a figure-level title using experiment name and parameter info
     title_lines = []
     title_lines.append(f"Flocking metrics ({n_runs} runs)")
@@ -176,7 +150,7 @@ def plot_stats(stats, n_runs, out_prefix, exp_name=None, param_info=None):
         title_lines.append(param_info)
     fig.suptitle("\n".join(title_lines), fontsize=FONT_SIZE_BASE + 1)
     # 1) Area
-    ax = axes[0]
+    ax = axes
     ax.plot(time, stats["area_mean"], color=COLOR_AREA, linewidth=1.4, label="Mean")
     ax.fill_between(
         time,
@@ -186,38 +160,8 @@ def plot_stats(stats, n_runs, out_prefix, exp_name=None, param_info=None):
         alpha=BAND_ALPHA,
         label="±1 SD",
     )
-    ax.set_ylabel("Flock area [arb. units]")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", frameon=False)
-
-    # 2) Polarisation SD
-    ax = axes[1]
-    ax.plot(time, stats["pol_mean"], color=COLOR_POL, linewidth=1.4, label="Mean")
-    ax.fill_between(
-        time,
-        stats["pol_mean"] - stats["pol_std"],
-        stats["pol_mean"] + stats["pol_std"],
-        color=COLOR_POL,
-        alpha=BAND_ALPHA,
-        label="±1 SD",
-    )
-    ax.set_ylabel("Heading spread SD [rad]")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", frameon=False)
-
-    # 3) Avg wind speed
-    ax = axes[2]
-    ax.plot(time, stats["wind_mean"], color=COLOR_WIND, linewidth=1.4, label="Mean")
-    ax.fill_between(
-        time,
-        stats["wind_mean"] - stats["wind_std"],
-        stats["wind_mean"] + stats["wind_std"],
-        color=COLOR_WIND,
-        alpha=BAND_ALPHA,
-        label="±1 SD",
-    )
-    ax.set_ylabel("Avg. wind speed [arb. units]", labelpad=20)
     ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Flock area [arb. units]")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", frameon=False)
 
@@ -231,12 +175,9 @@ def plot_stats(stats, n_runs, out_prefix, exp_name=None, param_info=None):
 
 def main():
     # Collect experiment folders:
-    #   - experiment_day2_*
-    #   - experiment_day3_*
+    #   - BOIDS_experiment*
     exp_dirs = []
 
-    exp_dirs.extend(sorted(BASE_DIR.glob("experiment_day2_*")))
-    exp_dirs.extend(sorted(BASE_DIR.glob("experiment_day3_*")))
     exp_dirs.extend(sorted(BASE_DIR.glob("BOIDS_experiment*")))
 
 
