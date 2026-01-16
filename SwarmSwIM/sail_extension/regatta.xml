@@ -139,13 +139,6 @@
             <description>sail_agent_default.xml</description>
             <!-- Name prefix -->
             <name>A</name>
-
-            <!-- EITHER Enable/Disable randomized poses -->
-            <randomized-pos>false</randomized-pos>
-            <!-- Count of agents with random poses -->
-            <rand-pos-agent-count>10</rand-pos-agent-count>
-
-            <!-- OR make agents poses explicit -->
             <state>
                 <!-- Initial state, one line for each agent -->
                 <!-- x, y, z, psi -->

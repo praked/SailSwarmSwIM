@@ -11,6 +11,11 @@ from .sensors.collision_avoidance import CollisionAvoidance
 
 # --- User-tunable parameters via environment variables ---
 
+# Boids flocking weight factors
+SEPARATION_FAC = float(os.environ.get("SWARM_SEP_FAC", "1.0"))
+ALIGNMENT_FAC = float(os.environ.get("SWARM_ALG_FAC", "1.0"))
+COHESION_FAC = float(os.environ.get("SWARM_COH_FAC", "1.0"))
+
 # Max simulation time (seconds)
 T_MAX = float(os.environ.get("SWARM_T_MAX", "300.0"))
 
@@ -21,7 +26,7 @@ SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", 
 
 SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
 NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS", "20.0"))
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "40.0"))
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))
 
 BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))
 BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))
@@ -50,7 +55,7 @@ def init_metrics_logger():
     global _metrics_writer
     f = open(METRICS_FILE, "w", newline="")
     _metrics_writer = csv.writer(f)
-    _metrics_writer.writerow(["time", "area"])
+    _metrics_writer.writerow(["time", "area", "avg_wind_speed"])
 
 def convex_hull_area(points: np.ndarray) -> float:
     """
@@ -195,7 +200,13 @@ class BoidsFlockingController:
         return vec
 
 
-    def desired_heading(self, agent):
+    def desired_heading(
+        self,
+        agent,
+        sep_fac=SEPARATION_FAC,
+        alg_fac=ALIGNMENT_FAC,
+        coh_fac=COHESION_FAC,
+    ):
         """
         Compute a desired heading for this agent based on local neighbors.
         Returns heading in degrees [0,360).
@@ -244,13 +255,19 @@ class BoidsFlockingController:
             sep_vec[1] += diff[1]
 
         if n_nbrs > 0:
-            # normalize vectors
+            #normalize vectors
             alg_vec /= n_nbrs
 
             avg_pos /= n_nbrs
             coh_vec[0] = avg_pos[0] - px
             coh_vec[1] = avg_pos[1] - py
 
+        # apply weights to the vectors to experiment with
+        sep_vec *= sep_fac
+        alg_vec *= alg_fac
+        coh_vec *= coh_fac
+
+        # Compute desired heading vector
         des_vec = np.add(alg_vec, coh_vec)
         des_vec = np.add(des_vec, sep_vec)
 
@@ -310,7 +327,7 @@ if __name__ == "__main__":
         show_wind=True,
         show_waypoints=False,
         show_agent_targets=False,
-        show_agent_status=False,
+        show_agent_status=True,
     )
 
     # Metrics sampling (once per METRICS_PERIOD seconds)
@@ -333,16 +350,25 @@ if __name__ == "__main__":
             if agent_nav_msg != agent.last_msg:
                 agent.last_msg = agent_nav_msg
         
-        # --- Metrics: flock area ---
+        # --- Metrics: flock area + avg wind speed ---
         # Only log once per METRICS_PERIOD seconds
         if _metrics_writer is not None and (t - metrics_last_time[0]) >= METRICS_PERIOD:
             positions = np.array([[a.pos[0], a.pos[1]] for a in sim.agents], dtype=float)
             area = convex_hull_area(positions)
 
-            _metrics_writer.writerow(
-                [f"{t:.3f}", f"{area:.6f}"]
-            )
+            # Average wind speed at agent positions
+            wind_speeds = []
+            for a in sim.agents:
+                wx, wy = sim.wind_field.get_wind_at_position(
+                    [a.pos[0], a.pos[1], 0.0],
+                    t,
+                )
+                wind_speeds.append(np.hypot(wx, wy))
+            avg_wind = float(np.mean(wind_speeds)) if wind_speeds else 0.0
 
+            _metrics_writer.writerow(
+                [f"{t:.3f}", f"{area:.6f}", f"{avg_wind:.6f}"]
+            )
             metrics_last_time[0] = t
 
     def execute_control(agent):

@@ -5,9 +5,19 @@ import os
 DIR_FILE = os.path.dirname(__file__)
 LOCAL_FILE = os.getcwd()
 
+# PARAMETERS
+
 SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
 
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "45.0"))           # +/- range drawn by WindPlotter
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))           # +/- range drawn by WindPlotter
+
+# Agent-pose generation parameters
+RANDOM_POSE = os.environ.get("SWARM_RND_POSE", "1").strip().lower() in ("1", "true", "yes", "on") # Enable/Disable randomized poses
+AGENT_COUNT = int(os.environ.get("SWARM_AGENT_COUNT", "20")) # Count of agents with random poses
+# If set to false, every agent starts at the same random pose
+SPREAD_POSES = os.environ.get("SWARM_SPREAD_POSES", "0").strip().lower() in ("1", "true", "yes", "on") # Enable/Disable spread starting poses
+
+
 ########### XML PARSING FUNCTIONS ###########
 
 def parse_matrix(element):
@@ -15,16 +25,28 @@ def parse_matrix(element):
     matrix = np.array([list(map(float, row.split())) for row in element.text.strip().split('\n')])
     return np.squeeze(matrix)
 
-def generate_matrix(agent_count):
-    # Generate a random position matrix with planar pos (x, y) between -20, 20,
+def generate_matrix(agent_count=AGENT_COUNT, spread_poses=SPREAD_POSES):
+    # Generate a random position matrix with planar pos (x, y) between +/- DOMAIN_SIZE
     # z == 1 and psi from 0, 360
     np.random.seed(SEED)
     spawn_domain = 2.0 * DOMAIN_SIZE - 2.0
-    matrix = np.column_stack([
-        np.round((spawn_domain * np.random.random_sample((agent_count, 2)) - DOMAIN_SIZE), 1),
-        np.ones((agent_count, 1)),
-        np.random.randint(0, 360, (agent_count, 1))
-    ])
+    if spread_poses:
+        # every agent gets own random pose (x, y and hdg)
+        matrix = np.column_stack([
+            np.round((spawn_domain * np.random.random_sample((agent_count, 2)) - DOMAIN_SIZE), 1),
+            np.ones((agent_count, 1)),
+            np.random.randint(0, 360, (agent_count, 1))
+        ])
+    else:
+        # every agent gets same random planar pose (x, y and hdg)
+        rand_pos = np.round((spawn_domain * np.random.random_sample((1, 2)) - DOMAIN_SIZE), 1)
+        rand_hdg = np.random.randint(0, 360, (1, 1))
+        matrix = np.column_stack([
+            np.tile(rand_pos, (agent_count, 1)),
+            np.ones((agent_count, 1)),
+            np.tile(rand_hdg, (agent_count, 1))
+        ])
+
     return np.squeeze(matrix)
 
 def get_sim_xml_path(input_path):
@@ -181,10 +203,11 @@ def parse_agents(input_path):
             nametype = agent_type.find("name").text
 
             # EITHER Generate states randomly
-            if (agent_type.find("randomized-pos").text == 'true'):
-                agent_count = int(agent_type.find("rand-pos-agent-count").text)
-                print("randomized-pos true, generating random positions for", agent_count, "agents")
-                states = generate_matrix(agent_count)
+            if (RANDOM_POSE):
+                print("randomized-pos true, generating random positions for", AGENT_COUNT, "agents")
+                if SPREAD_POSES:
+                    print("spreading poses")
+                states = generate_matrix()
             # OR Import states from xml
             else:
                 states = parse_matrix(agent_type.find('state'))

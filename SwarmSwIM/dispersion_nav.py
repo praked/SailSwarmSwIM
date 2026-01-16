@@ -18,11 +18,11 @@ T_MAX = float(os.environ.get("SWARM_T_MAX", "300.0"))
 # Headless / batch mode (no interactive matplotlib window)
 HEADLESS = os.environ.get("SWARM_HEADLESS", "0").strip().lower() in ("1", "true", "yes", "on")
 
-SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", "true", "yes", "on")
+SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "0").strip().lower() in ("1", "true", "yes", "on")
 
 SEED = int(os.environ.get("SWARMSWIM_SEED", "142"))
 NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS", "20.0"))     # comm radius in meters (sim units)
-DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "45.0"))         # +/- range drawn by WindPlotter
+DOMAIN_SIZE = float(os.environ.get("SWARMSWIM_DOMAIN", "35.0"))         # +/- range drawn by WindPlotter
 
 BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))        # strength of "push" back inside
 BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))    # soft wall thickness in meters
@@ -42,7 +42,7 @@ METRICS_PERIOD = float(os.environ.get("SWARM_METRICS_PERIOD", "1.0"))
 
 METRICS_FILE = os.environ.get(
     "SWARM_METRICS_FILE",
-    f"flocking_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    f"dispersion_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 )
 
 _metrics_writer = None
@@ -50,7 +50,7 @@ def init_metrics_logger():
     global _metrics_writer
     f = open(METRICS_FILE, "w", newline="")
     _metrics_writer = csv.writer(f)
-    _metrics_writer.writerow(["time", "area", "avg_wind_speed"])
+    _metrics_writer.writerow(["time", "area", "avg_wind_speed", "arrived_agents"])
 
 def convex_hull_area(points: np.ndarray) -> float:
     """
@@ -284,7 +284,7 @@ class DispersionController:
             'loitering': False
             }
 
-    def step(self, agent, stepcount=0):
+    def step(self, agent, reccount=0):
         """
         Compute a target cell for this agent based on current position and neighbor communication.
         Each agent keeps a list of every target cell and its occupant and tries to constantly update it.
@@ -292,12 +292,12 @@ class DispersionController:
         Fallback is a recursion of this step-function (with increased priority and updated internal memory), as well
         as hardcore overwrite and random selection as further fallbacks (should never happen).
         Phases:
-            - PHASE 0: Update this agents memory with own distances, own at least one (closest) cell at the end of this step
-            - PHASE 1: Bidding: Update internal memory with nbr data (here an agent can loose its selected cell or gain new ones)
-            - PHASE 2: Find the nearest won cell and select it as target
-            - PHASE 3: Fallback if lost all cells during bidding
-            - PHASE 4: Broadcast results (perspective on whole list of cells) via comm module
-            - PHASE 5: Return target (or target-cell-id if in recursion)
+            - PHASE 1: Update this agents memory with own distances, own at least one (closest) cell at the end of this step
+            - PHASE 2: Bidding: Update internal memory with nbr data (here an agent can loose its selected cell or gain new ones)
+            - PHASE 3: Find the nearest won cell and select it as target
+            - PHASE 4: Fallback if lost all cells during bidding
+            - PHASE 5: Broadcast results (perspective on whole list of cells) via comm module
+            - PHASE 6: Return target (or target-cell-id if in recursion)
         """
         my_mem = self.agent_memory[agent.name]
         my_pos = agent.pos[0:2]
@@ -306,7 +306,7 @@ class DispersionController:
         loiter_cell = self.loiter_cell[agent.name]
         has_cell = False
 
-        # PHASE 0: Update own memory with own distances, own at least one (closest) cell at the end of this step
+        # PHASE 1: Update own memory with own distances, own at least one (closest) cell at the end of this phase
         # LESS AGGRESSIVE -> take maximum one cell (has_cell)
         best_cell = None
         best_cost = float('inf')
@@ -347,7 +347,7 @@ class DispersionController:
                         self._clear_cell(agent, cell_id)
         
 
-        # PHASE 1: Update internal memory with nbr data
+        # PHASE 2: Update internal memory with nbr data
         for nbr, msg in self.comm.read_neighbor_states(agent):
             neighbor_auction = msg.get('auction_data')
             if not neighbor_auction:
@@ -383,7 +383,7 @@ class DispersionController:
                         my_mem[cell_id] = random.choice((my_mem[cell_id], nbr_bid.copy()))
 
 
-        # PHASE 2: Find best winning cell
+        # PHASE 3: Find best winning cell
         my_cells = [c for c, b in my_mem.items() if b['winner'] == agent.name]
         my_cell_idx = None
 
@@ -397,15 +397,15 @@ class DispersionController:
             self.loiter_cell[agent.name] = my_cell_idx
 
 
-        # PHASE 3 (FALLBACK): Bidding fails (lost bid or no cell available)
+        # PHASE 4 (FALLBACK): Bidding fails (lost bid or no cell available)
         if my_cell_idx is None:
             self.agent_priority[agent.name] += 1 #increase priority
 
-            # Do a recursion of step(), effective because own memory is now updated (affects PHASE 0)
-            if stepcount < 3:
-                # Do a maximum of 3 recursions
-                new_stepcount = stepcount + 1
-                my_cell_idx = self.step(agent, new_stepcount)
+            # Do a recursion of step(), effective because own memory is now updated (affects PHASE 1)
+            if reccount < 2:
+                # Do a maximum of 1 recursion
+                new_reccount = reccount + 1
+                my_cell_idx = self.step(agent, new_reccount)
 
             else:
                 # Hardcore-Fallback: overtake a cell though it has a better bidder
@@ -417,16 +417,17 @@ class DispersionController:
 
                 # Evaluating bids of all cells (compare with bids of agents which are no nbrs)
                 for cell_id, bid in my_mem.items():
+
                     target_pos = self.targets[cell_id]
                     dist = np.linalg.norm(target_pos - my_pos)
 
                     if dist < bid['cost']:
                         margin = bid['cost'] - dist
-                        if margin > best_bid_margin:
+                        if (margin > best_bid_margin) and not bid['loitering']: #don't overtake cells someone has already arrived at 
                             best_bid_margin = margin
                             best_cell = cell_id
 
-                # take best_cell and bid
+                # Take best_cell
                 if best_cell is not None:
                     self._take_cell(agent, best_cell, loitering=self_loitering)
                     my_cell_idx = best_cell
@@ -437,12 +438,12 @@ class DispersionController:
                     print(agent.name, "random choosing", my_cell_idx)
 
 
-        # PHASE 4: Broadcasting results
+        # PHASE 5: Broadcasting results
         self.comm.broadcast(agent, {'auction_data': my_mem})
 
 
-        # PHASE 5: Return target (/target-cell-id if in recursion)
-        if stepcount == 0:
+        # PHASE 6: Return target (/target-cell-id if in recursion)
+        if reccount == 0:
             if my_cell_idx is not None:
                 return self.targets[my_cell_idx]
             return None
@@ -593,7 +594,7 @@ if __name__ == "__main__":
             if agent_nav_msg != agent.last_msg:
                 agent.last_msg = agent_nav_msg
 
-        # --- Metrics: flock area + polarisation-like spread + avg wind speed ---
+        # --- Metrics: flock area + avg wind speed ---
         # Only log once per METRICS_PERIOD seconds
         if _metrics_writer is not None and (t - metrics_last_time[0]) >= METRICS_PERIOD:
             positions = np.array([[a.pos[0], a.pos[1]] for a in sim.agents], dtype=float)
@@ -609,8 +610,13 @@ if __name__ == "__main__":
                 wind_speeds.append(np.hypot(wx, wy))
             avg_wind = float(np.mean(wind_speeds)) if wind_speeds else 0.0
 
+            arrived_ag = 0
+            for a in sim.agents:
+                if a.nav.is_loitering:
+                    arrived_ag += 1
+
             _metrics_writer.writerow(
-                [f"{t:.3f}", f"{area:.6f}", f"{avg_wind:.6f}"]
+                [f"{t:.3f}", f"{area:.6f}", f"{avg_wind:.6f}", f"{arrived_ag:.1f}"]
             )
             metrics_last_time[0] = t
 
