@@ -1,63 +1,63 @@
-# SwarmSwIM: Sailing Extension
-This plugin adds sailing simulation to SwarmSwIM. 
+# SailSwarmSwIM
 
-**Related repositories**
-- [sail_examples](https://github.com/aaron4522/swarmswim_examples)
-- [swarmswim](https://github.com/save-xx/SwarmSwIM)
-- [swarmswim examples](https://github.com/save-xx/swarmswim_examples)
-- [swarmswimros](https://github.com/save-xx/swarmswimros)
+SailSwarmSwIM is a sailing-robot swarm simulator built on top of SwarmSwIM.
 
-## Features
+This fork extends the original simulator with wind-aware sailing dynamics, sailing-specific agent behavior, waypoint-based navigation, and visualization tools for multi-agent sailing scenarios.
+
+## Overview
+
+The repository adds a sailing extension to the SwarmSwIM framework for simulating autonomous sailboat agents in a 2D environment with wind.
+
+It is aimed at research and experimentation on topics such as:
+
+- sailing robot dynamics
+- wind-aware navigation
+- waypoint following and tacking behavior
+- multi-agent sailing scenarios
+- regatta-style demonstrations and experiments
+
+## Demo
 
 https://github.com/user-attachments/assets/78136534-73f5-4b2f-b991-e2a12eed649c
 
 
-Key features include:
-- Wind physics simulating linear gusts/lulls and directional turbulence
-- Extendable sailing force mechanics
-- Extendable navigation and tacking behavior
-- Waypoint navigation
+## Main sailing components
 
+The sailing-specific code is located in:
+
+- `SwarmSwIM/sail_extension/physics.py`  
+  Wind field generation and sailing-related physics utilities.
+
+- `SwarmSwIM/sail_extension/sail_agent.py`  
+  Sailing agent behavior, navigation logic, and waypoint handling.
+
+- `SwarmSwIM/sail_extension/wind_plotter.py`  
+  Visualization of wind, agents, and waypoints.
+
+- `SwarmSwIM/sail_extension/regatta.xml`  
+  Example sailing scenario configuration.
+
+- `SwarmSwIM/sail_extension/sail_agent_default.xml`  
+  Default sailing-agent parameters.
+
+A runnable example is provided in:
+
+- `SwarmSwIM/regatta_nav.py`
+
+## Features
+
+- Wind-aware sailing simulation
+- Extendable sailing-agent mechanics
+- Waypoint navigation
+- Tacking-oriented behavior
+- Wind-field visualization
+- Multi-agent sailing scenario support
 
 ## Installation
-The package can be installed Globally to be accessible regardless the location.
 
----
-#### Generic installation
-For a generic installation, just run: 
-```bash
-pip install git+https://github.com/aaron4522/SwarmSwIM.git
-```
-Note that you will not be able to alter the code.
+Clone this repository and install it in editable mode:
 
----
-#### Dev installation
-For a developer (editable) installation:
-
-Clone the repository in a Folder of your choice:
 ```bash
-git clone https://github.com/aaron4522/SwarmSwIM.git
-```
-
-Enter the folder that has been cloned
-in the `SwarmSwIM` folder:  
-```bash
-cd SwarmSwIM/ # Go to download folder
-```
-  
-Install SwarmSwIM as python pakage, `-e` indicates that is editable.
-```bash
+git clone https://github.com/praked/SailSwarmSwIM.git
+cd SailSwarmSwIM
 pip install -e .
-```
-
-The installation should conclude with:
-```
-Successfully built SwarmSwIM
-Installing collected packages: SwarmSwIM
-Successfully installed SwarmSwIM-x.x.x
-```
-
----
-
-## Wiki
-Refer to SailSwarm [Wiki](https://github.com/save-xx/SwarmSwIM/wiki). Plugin documentation in progress.
