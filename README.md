@@ -59,5 +59,20 @@ Successfully installed SwarmSwIM-x.x.x
 
 ---
 
+## Running Experiments
+
+Batch experiment scripts live in the `scripts/` directory and must be run from the **repository root**:
+
+```bash
+bash scripts/RunFlocking.sh       # Run 10-seed flocking experiment
+bash scripts/RunAggregation.sh    # Run aggregation experiment
+bash scripts/ScriptFlocking.sh    # Parameter sweep (many seeds/combos)
+bash scripts/120thread.sh         # High-parallelism parameter sweep
+```
+
+Output directories and CSV metrics files are gitignored and generated locally.
+
+---
+
 ## Wiki
 Refer to SailSwarm [Wiki](https://github.com/save-xx/SwarmSwIM/wiki). Plugin documentation in progress.
