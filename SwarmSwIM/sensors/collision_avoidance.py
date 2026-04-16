@@ -7,6 +7,7 @@ DEFAULT_CPA_HORIZON = float(os.environ.get("SWARM_CA_HORIZON", "12.0"))
 DEFAULT_AVOID_BIAS_MAX = float(os.environ.get("SWARM_CA_BIAS_MAX", "90.0"))  # deg
 DEFAULT_TIE_MODE = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()  # deterministic|random|colregs
 DEFAULT_DWELL = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
+DEFAULT_CA_RADIUS = os.environ.get("SWARM_CA_RADIUS", None)  # None → use comm radius
 
 class CollisionAvoidance:
     """Heading bias from Closest-Point-of-Approach with symmetry-breaking and hysteresis."""
@@ -16,7 +17,8 @@ class CollisionAvoidance:
                  bias_max_deg=DEFAULT_AVOID_BIAS_MAX,
                  tie_mode=DEFAULT_TIE_MODE,
                  dwell=DEFAULT_DWELL,
-                 seed=None):
+                 seed=None,
+                 ca_radius=None):
         self.comm = comm
         self.safe_radius = float(safe_radius)
         self.horizon = float(horizon)
@@ -24,7 +26,13 @@ class CollisionAvoidance:
         self.tie_mode = tie_mode
         self.dwell = float(dwell)
         self.seed = int(seed) if seed is not None else 142
+        # CA sensing radius: defaults to comm radius if not set
+        _env = DEFAULT_CA_RADIUS
+        _arg = ca_radius if ca_radius is not None else (_env and float(_env))
+        self.ca_radius = float(_arg) if _arg is not None else None
         self.encounters = {}
+        self.collision_count = 0            # cumulative unique collision events
+        self._colliding_pairs: set = set()  # pairs currently overlapping
 
     @staticmethod
     def _pose_of(agent):
@@ -37,6 +45,21 @@ class CollisionAvoidance:
         vx = pose["spd"] * np.cos(np.deg2rad(pose["hdg"]))
         vy = pose["spd"] * np.sin(np.deg2rad(pose["hdg"]))
         return np.array([vx, vy], dtype=float)
+
+    def _read_all_poses(self, agent):
+        """Return (neighbor, pose) pairs within ca_radius (falls back to comm.radius)."""
+        radius = self.ca_radius if self.ca_radius is not None else self.comm.radius
+        mx, my = agent.pos[0], agent.pos[1]
+        out = []
+        for nbr in self.comm.sim.agents:
+            if nbr is agent:
+                continue
+            st = self.comm.posebox.get(nbr.name)
+            if st is None:
+                continue
+            if np.hypot(st["x"] - mx, st["y"] - my) <= radius:
+                out.append((nbr, st))
+        return out
 
     def _cpa(self, my_pose, nb_pose):
         p_i = np.array([my_pose["x"], my_pose["y"]], dtype=float)
@@ -189,7 +212,14 @@ class CollisionAvoidance:
         # Sailing COLREGS first (Rule 12/13)
         sail_choice = self._sail_colregs_side(my_pose, nb_pose)
         if sail_choice is not None:
-            chosen = sail_choice
+            if sail_choice == 0.0:
+                # Stand-on vessel: COLREGS Rule 17(b) — when it becomes apparent
+                # the give-way vessel is not acting, the stand-on vessel SHALL take
+                # action.  Apply a reduced cooperative bias in the geometry-dictated
+                # direction so both vessels open the gap, not just one.
+                chosen = base_sign * 0.4
+            else:
+                chosen = sail_choice  # -1.0: give-way, full avoidance
         elif self._is_head_on_or_following(my_pose, nb_pose) or abs(z) < 1e-3:
             if self.tie_mode.startswith("deterministic"):
                 chosen = self._deterministic_side(me_name, nb_name)
@@ -205,20 +235,53 @@ class CollisionAvoidance:
 
     def suggest_heading(self, agent, desired_heading_deg):
         my_pose = self._pose_of(agent)
-        conflicts = []
-        for nbr, st in self.comm.read_neighbor_poses(agent):
+        now = getattr(agent, 'internal_clock', 0.0)
+        total_bias_rad = 0.0
+        any_conflict = False
+
+        for nbr, st in self._read_all_poses(agent):
             t, d = self._cpa(my_pose, st)
-            if 0.0 <= t <= self.horizon and d < self.safe_radius:
-                conflicts.append((nbr, st, t, d))
-        if not conflicts:
+            if not (0.0 <= t <= self.horizon and d < self.safe_radius):
+                continue
+            any_conflict = True
+
+            # Urgency from predicted CPA distance
+            k_d = max(0.0, min(1.0, (self.safe_radius - d) / self.safe_radius))
+            # Urgency from current separation (handles already-overlapping agents)
+            cur_d = np.hypot(st["x"] - my_pose["x"], st["y"] - my_pose["y"])
+            k_now = max(0.0, min(1.0, (self.safe_radius - cur_d) / self.safe_radius)) \
+                if cur_d < self.safe_radius else 0.0
+            # Time urgency: full when imminent, half at the planning horizon
+            k_t = max(0.0, 1.0 - t / self.horizon)
+            k = max(k_d, k_now) * (0.5 + 0.5 * k_t)
+
+            sign = self._avoid_sign(my_pose, st, agent.name, nbr.name, now)
+            total_bias_rad += sign * k * self.bias_max
+
+        if not any_conflict:
             return desired_heading_deg
 
-        nbr, st, t, d = min(conflicts, key=lambda x: (x[3], x[2]))
-        now = getattr(agent, 'internal_clock', 0.0)
-        sign = self._avoid_sign(my_pose, st, agent.name, nbr.name, now)
+        # Clamp aggregate bias to [-bias_max, +bias_max]
+        total_bias_rad = max(-self.bias_max, min(self.bias_max, total_bias_rad))
+        return (desired_heading_deg + np.rad2deg(total_bias_rad)) % 360.0
 
-        k_d = max(0.0, min(1.0, (self.safe_radius - d) / self.safe_radius))
-        k_t = max(0.0, min(1.0, (self.horizon - t) / self.horizon))
-        k = max(k_d, 0.5 * k_t)
-        bias = sign * (k * self.bias_max)
-        return (desired_heading_deg + np.rad2deg(bias)) % 360.0
+    def scan_collisions(self, agents):
+        """Detect inter-agent collisions (separation < safe_radius).
+
+        Counts each pair's first frame inside safe_radius as one event.
+        Call once per simulation tick after positions are updated.
+        Returns the cumulative collision_count.
+        """
+        agent_list = list(agents)
+        now_colliding = set()
+        for i in range(len(agent_list)):
+            for j in range(i + 1, len(agent_list)):
+                a, b = agent_list[i], agent_list[j]
+                d = float(np.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1]))
+                if d < self.safe_radius:
+                    key = self._pair_key(a.name, b.name)
+                    now_colliding.add(key)
+                    if key not in self._colliding_pairs:
+                        self.collision_count += 1
+        self._colliding_pairs = now_colliding
+        return self.collision_count
