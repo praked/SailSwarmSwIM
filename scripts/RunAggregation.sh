@@ -25,5 +25,5 @@ for SEED in $(seq 1 2); do
     SWARM_T_MAX="${T_MAX_VALUE}" \
     SWARM_HEADLESS=1 \
     MPLBACKEND=Agg \
-    python3 -m SwarmSwIM.aggregation_nav
+    python3 -m SwarmSwIM.behaviors.aggregation_nav
 done

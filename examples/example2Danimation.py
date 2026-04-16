@@ -1,8 +1,8 @@
-from .agent_class import Agent
-from .sim_class import Simulator
-from .sensors.visual_detection import CNNDetection
-from .sensors.acoustic_comm import AcousticChannel
-from .animator2D import Plotter
+from SwarmSwIM.agent_class import Agent
+from SwarmSwIM.sim_class import Simulator
+from SwarmSwIM.sensors.visual_detection import CNNDetection
+from SwarmSwIM.sensors.acoustic_comm import AcousticChannel
+from SwarmSwIM.animator2D import Plotter
 import matplotlib.pyplot as plt
 
 # adding optinal graphics

@@ -24,5 +24,5 @@ for SEED in $(seq 1 10); do
     SWARMSWIM_DOMAIN="${DOMAIN_VALUE}" \
     SWARM_HEADLESS=1 \
     MPLBACKEND=Agg \
-    python3 -m SwarmSwIM.flocking_nav
+    python3 -m SwarmSwIM.behaviors.flocking_nav
 done

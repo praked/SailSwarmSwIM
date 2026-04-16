@@ -1,10 +1,10 @@
 import numpy as np
-from .sail_extension.wind_plotter import WindPlotter
+from ..sail_extension.wind_plotter import WindPlotter
 from SwarmSwIM import Simulator
 from pathlib import Path
 
 if __name__ == "__main__":
-    base = Path(__file__).resolve().parent
+    base = Path(__file__).resolve().parent.parent
     sim = Simulator(
         1 / 24,
         sim_xml=str(base / "sail_extension" / "regatta.xml"),

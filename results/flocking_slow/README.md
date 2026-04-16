@@ -27,5 +27,5 @@ Same schema as `flocking/`:
 ## Reproduce
 
 ```bash
-python SwarmSwIM/flocking_ang_slow.py
+python -m SwarmSwIM.behaviors.flocking_ang_slow
 ```

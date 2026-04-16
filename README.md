@@ -67,13 +67,17 @@ Successfully installed SwarmSwIM-x.x.x
 
 | Script | Behavior | Metrics CSV |
 |--------|----------|-------------|
-| `SwarmSwIM/flocking_nav.py` | Couzin-zone flocking (ZOR/ZOO/ZOA) | `results/flocking/` |
-| `SwarmSwIM/flocking_ang_slow.py` | Angular-slow flocking variant | `results/flocking_slow/` |
-| `SwarmSwIM/aggregation_nav.py` | Connectivity-based aggregation | `results/aggregation/` |
-| `SwarmSwIM/agg_nav_v2.py` | Force-field aggregation (F_sep/F_coh/F_agg) | `results/aggregation_v2/` |
-| `SwarmSwIM/regatta_nav.py` | Regatta / waypoint racing | — |
+| `SwarmSwIM/behaviors/flocking_nav.py` | Couzin-zone flocking (ZOR/ZOO/ZOA) | `results/flocking/` |
+| `SwarmSwIM/behaviors/flocking_ang_slow.py` | Angular-slow flocking variant | `results/flocking_slow/` |
+| `SwarmSwIM/behaviors/aggregation_nav.py` | Connectivity-based aggregation | `results/aggregation/` |
+| `SwarmSwIM/behaviors/agg_nav_v2.py` | Force-field aggregation (F_sep/F_coh/F_agg) | `results/aggregation_v2/` |
+| `SwarmSwIM/behaviors/regatta_nav.py` | Regatta / waypoint racing | — |
 
-Each script can be run directly (`python -m SwarmSwIM.<script>`) or via the batch scripts in `scripts/`.
+Each script can be run directly from the repo root:
+```bash
+python -m SwarmSwIM.behaviors.flocking_nav
+python -m SwarmSwIM.behaviors.aggregation_nav
+```
 
 ---
 

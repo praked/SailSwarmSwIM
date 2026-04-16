@@ -84,7 +84,7 @@ EOF
             SWARM_METRICS_FILE="${METRICS_FILE}" \
             SWARM_HEADLESS=1 \
             MPLBACKEND=Agg \
-            python3 -m SwarmSwIM.flocking_nav
+            python3 -m SwarmSwIM.behaviors.flocking_nav
           ) &
 
           RUNNING_JOBS=$((RUNNING_JOBS + 1))

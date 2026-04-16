@@ -35,9 +35,9 @@ import csv
 from datetime import datetime
 
 from SwarmSwIM import Simulator
-from .sail_extension.wind_plotter import WindPlotter
-from .sensors.comm import NeighborhoodComm
-from .sensors.collision_avoidance import CollisionAvoidance
+from ..sail_extension.wind_plotter import WindPlotter
+from ..sensors.comm import NeighborhoodComm
+from ..sensors.collision_avoidance import CollisionAvoidance
 
 # ── Tunable parameters ──────────────────────────────────────────────────────
 
@@ -345,7 +345,7 @@ class VelocityAwareFlockingController:
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    base = Path(__file__).resolve().parent
+    base = Path(__file__).resolve().parent.parent
 
     sim = Simulator(
         1 / 24,

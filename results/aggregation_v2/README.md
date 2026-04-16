@@ -32,5 +32,5 @@ Same schema as `aggregation/`:
 ## Reproduce
 
 ```bash
-python SwarmSwIM/agg_nav_v2.py
+python -m SwarmSwIM.behaviors.agg_nav_v2
 ```

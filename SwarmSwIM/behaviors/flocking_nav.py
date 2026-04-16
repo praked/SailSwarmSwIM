@@ -5,9 +5,9 @@ import csv
 from datetime import datetime
 
 from SwarmSwIM import Simulator
-from .sail_extension.wind_plotter import WindPlotter
-from .sensors.comm import NeighborhoodComm
-from .sensors.collision_avoidance import CollisionAvoidance
+from ..sail_extension.wind_plotter import WindPlotter
+from ..sensors.comm import NeighborhoodComm
+from ..sensors.collision_avoidance import CollisionAvoidance
 
 # --- User-tunable parameters via environment variables ---
 
@@ -258,7 +258,7 @@ class FlockingController:
         Returns heading in degrees [0,360) or None (fallback to current cmd/psi).
         """
         # Use pose-sharing data from NeighborhoodComm
-        from .sensors.collision_avoidance import CollisionAvoidance as _CA
+        from ..sensors.collision_avoidance import CollisionAvoidance as _CA
         my_pose = _CA._pose_of(agent)
 
         nb_data = self.comm.read_neighbor_poses(agent)
@@ -383,7 +383,7 @@ def _agent_state_line(a):
 # --- Main script entry point ---
 
 if __name__ == "__main__":
-    base = Path(__file__).resolve().parent
+    base = Path(__file__).resolve().parent.parent
 
     # Build simulator from sailing regatta xml
     sim = Simulator(
@@ -462,7 +462,7 @@ if __name__ == "__main__":
         t = getattr(sim, "time", 0.0)
 
         # Share current poses for flocking + collision avoidance
-        from .sensors.collision_avoidance import CollisionAvoidance as _CA
+        from ..sensors.collision_avoidance import CollisionAvoidance as _CA
         for a in sim.agents:
             comm.broadcast_pose(a, _CA._pose_of(a))
 

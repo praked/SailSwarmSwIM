@@ -38,8 +38,8 @@ from SwarmSwIM import Simulator
 import csv
 from datetime import datetime
 
-from .sail_extension.wind_plotter import WindPlotter
-from .sensors.comm import NeighborhoodComm
+from ..sail_extension.wind_plotter import WindPlotter
+from ..sensors.comm import NeighborhoodComm
 
 # ── Tunable parameters (all overridable via environment variables) ──────────
 
@@ -329,7 +329,7 @@ class SwarmBehavior:
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    base = Path(__file__).resolve().parent
+    base = Path(__file__).resolve().parent.parent
 
     sim = Simulator(
         1 / 24,

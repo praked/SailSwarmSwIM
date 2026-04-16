@@ -15,8 +15,8 @@ import sys
 import glob
 import pathlib
 
-# Define base directory (repo root, one level above this script)
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
+# Define base directory (repo root: analysis/ → SwarmSwIM/ → repo root)
+BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
 
 import numpy as np
 import pandas as pd

@@ -4,10 +4,10 @@ import numpy as np
 from SwarmSwIM import Simulator
 import csv
 from datetime import datetime
-from .sail_extension.wind_plotter import WindPlotter
+from ..sail_extension.wind_plotter import WindPlotter
 
-from .sensors.comm import NeighborhoodComm
-from .sensors.collision_avoidance import CollisionAvoidance
+from ..sensors.comm import NeighborhoodComm
+from ..sensors.collision_avoidance import CollisionAvoidance
 
 
 SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1","true","yes","on")
@@ -305,7 +305,7 @@ def _agent_state_line(a):
     return f"{a.name} pos=({x:.1f},{y:.1f}) H={h:.0f}° v={v:.2f} m/s -> WP {_format_wp(wp)} d={dist:.1f}"
 
 if __name__ == "__main__":
-    base = Path(__file__).resolve().parent
+    base = Path(__file__).resolve().parent.parent
 
     # Build simulator from sailing regatta xml
     sim = Simulator(
