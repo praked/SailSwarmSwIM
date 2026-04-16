@@ -11,12 +11,16 @@ This plugin adds sailing simulation to SwarmSwIM.
 
 https://github.com/user-attachments/assets/78136534-73f5-4b2f-b991-e2a12eed649c
 
-
 Key features include:
 - Wind physics simulating linear gusts/lulls and directional turbulence
-- Extendable sailing force mechanics
-- Extendable navigation and tacking behavior
+- Extendable sailing force mechanics and tacking behavior
 - Waypoint navigation
+- Couzin-zone flocking (repulsion / orientation / attraction)
+- Angular-slow flocking variant (smoother heading dynamics)
+- Aggregation toward a shared goal via connectivity-based clustering
+- Aggregation v2 with behavioral force fields (F_sep + F_coh + F_agg)
+- CPA-based collision avoidance with CoLREGs sailing rules
+- Acoustic and visual sensor models
 
 
 ## Installation
@@ -59,18 +63,84 @@ Successfully installed SwarmSwIM-x.x.x
 
 ---
 
+## Navigation Behaviors
+
+| Script | Behavior | Metrics CSV |
+|--------|----------|-------------|
+| `SwarmSwIM/flocking_nav.py` | Couzin-zone flocking (ZOR/ZOO/ZOA) | `results/flocking/` |
+| `SwarmSwIM/flocking_ang_slow.py` | Angular-slow flocking variant | `results/flocking_slow/` |
+| `SwarmSwIM/aggregation_nav.py` | Connectivity-based aggregation | `results/aggregation/` |
+| `SwarmSwIM/agg_nav_v2.py` | Force-field aggregation (F_sep/F_coh/F_agg) | `results/aggregation_v2/` |
+| `SwarmSwIM/regatta_nav.py` | Regatta / waypoint racing | — |
+
+Each script can be run directly (`python -m SwarmSwIM.<script>`) or via the batch scripts in `scripts/`.
+
+---
+
 ## Running Experiments
 
-Batch experiment scripts live in the `scripts/` directory and must be run from the **repository root**:
+Batch scripts live in `scripts/` and must be run from the **repository root**:
 
 ```bash
-bash scripts/RunFlocking.sh       # Run 10-seed flocking experiment
-bash scripts/RunAggregation.sh    # Run aggregation experiment
-bash scripts/ScriptFlocking.sh    # Parameter sweep (many seeds/combos)
-bash scripts/120thread.sh         # High-parallelism parameter sweep
+bash scripts/RunFlocking.sh       # 10-seed flocking experiment → results/flocking/
+bash scripts/RunAggregation.sh    # aggregation experiment      → results/aggregation/
+bash scripts/ScriptFlocking.sh    # full parameter sweep        → results/flocking/
+bash scripts/120thread.sh         # high-parallelism sweep      → results/flocking/
 ```
 
-Output directories and CSV metrics files are gitignored and generated locally.
+Outputs land in `results/` (gitignored). Each subfolder has its own `README.md` describing the metrics schema and how to reproduce.
+
+---
+
+## Environment Variables
+
+All parameters can be tuned via environment variables without editing code.
+
+### Flocking (`flocking_nav.py`, `flocking_ang_slow.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_ZOR` | `2.0` | Zone of repulsion radius [m] |
+| `SWARM_ZOO` | `10.0` | Zone of orientation radius [m] |
+| `SWARM_ZOA` | `18.0` | Zone of attraction radius [m] |
+| `SWARM_T_MAX` | `400.0` | Simulation duration [s] |
+| `SWARMSWIM_DOMAIN` | `35.0` | Arena half-size [m] |
+| `SWARMSWIM_SEED` | `42` | Random seed |
+| `SWARM_METRICS_FILE` | `results/flocking/...csv` | Output CSV path |
+| `SWARM_HEADLESS` | `0` | Set to `1` to disable visualisation |
+
+### Aggregation (`aggregation_nav.py`, `agg_nav_v2.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_AGG_DC` | comm radius | Connectivity distance [m] |
+| `SWARM_T_MAX` | `300.0` | Simulation duration [s] |
+| `SWARM_METRICS_FILE` | `results/aggregation/...csv` | Output CSV path |
+
+### Collision Avoidance (`sensors/collision_avoidance.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_CA_SAFE_RADIUS` | `4.0` | CPA avoidance bubble radius [m] |
+| `SWARM_CA_HORIZON` | `12.0` | CPA look-ahead time [s] |
+| `SWARM_CA_BIAS_MAX` | `90.0` | Max heading bias [deg] |
+| `SWARM_CA_TIE_MODE` | `colregs` | Tie-break mode: `colregs` / `deterministic` / `random` |
+| `SWARM_NEAR_RADIUS` | `safe_radius/2` | Physical collision threshold [m] — used by both the collision counter and the red-agent visual indicator |
+
+---
+
+## Results Structure
+
+```
+results/
+├── flocking/         Couzin flocking runs
+├── flocking_slow/    Angular-slow variant runs
+├── aggregation/      Standard aggregation runs
+├── aggregation_v2/   Force-field aggregation runs
+└── misc/             One-off tests and archived data
+```
+
+Each subfolder contains a `README.md` with the metrics column schema and reproduction instructions.
 
 ---
 

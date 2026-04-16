@@ -8,6 +8,10 @@ DEFAULT_AVOID_BIAS_MAX = float(os.environ.get("SWARM_CA_BIAS_MAX", "90.0"))  # d
 DEFAULT_TIE_MODE = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()  # deterministic|random|colregs
 DEFAULT_DWELL = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
 DEFAULT_CA_RADIUS = os.environ.get("SWARM_CA_RADIUS", None)  # None → use comm radius
+# Physical collision threshold — matches SWARM_NEAR_RADIUS used by the visual indicator
+# so scan_collisions() and the red-agent display fire on the same condition.
+_nr = os.environ.get("SWARM_NEAR_RADIUS")
+DEFAULT_COLLISION_RADIUS = float(_nr) if _nr else DEFAULT_SAFE_RADIUS / 2.0
 
 class CollisionAvoidance:
     """Heading bias from Closest-Point-of-Approach with symmetry-breaking and hysteresis."""
@@ -18,9 +22,11 @@ class CollisionAvoidance:
                  tie_mode=DEFAULT_TIE_MODE,
                  dwell=DEFAULT_DWELL,
                  seed=None,
-                 ca_radius=None):
+                 ca_radius=None,
+                 collision_radius=DEFAULT_COLLISION_RADIUS):
         self.comm = comm
         self.safe_radius = float(safe_radius)
+        self.collision_radius = float(collision_radius)  # threshold for scan_collisions()
         self.horizon = float(horizon)
         self.bias_max = np.deg2rad(float(bias_max_deg))
         self.tie_mode = tie_mode
@@ -266,9 +272,12 @@ class CollisionAvoidance:
         return (desired_heading_deg + np.rad2deg(total_bias_rad)) % 360.0
 
     def scan_collisions(self, agents):
-        """Detect inter-agent collisions (separation < safe_radius).
+        """Detect inter-agent collisions (separation < collision_radius).
 
-        Counts each pair's first frame inside safe_radius as one event.
+        Uses collision_radius (physical overlap threshold, same as SWARM_NEAR_RADIUS)
+        rather than safe_radius (the CA avoidance bubble) so the counter matches
+        the visual red-agent indicator exactly.
+        Counts each pair's first frame inside collision_radius as one event.
         Call once per simulation tick after positions are updated.
         Returns the cumulative collision_count.
         """
@@ -278,7 +287,7 @@ class CollisionAvoidance:
             for j in range(i + 1, len(agent_list)):
                 a, b = agent_list[i], agent_list[j]
                 d = float(np.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1]))
-                if d < self.safe_radius:
+                if d < self.collision_radius:
                     key = self._pair_key(a.name, b.name)
                     now_colliding.add(key)
                     if key not in self._colliding_pairs:
