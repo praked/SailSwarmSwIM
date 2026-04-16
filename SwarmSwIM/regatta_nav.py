@@ -13,7 +13,7 @@ if __name__ == "__main__":
     plotter = WindPlotter(
         simulator=sim,
         wind_field=sim.wind_field,
-        SIZE=35,
+        SIZE=10,
         show_wind=True,
         show_waypoints=True,
     )
