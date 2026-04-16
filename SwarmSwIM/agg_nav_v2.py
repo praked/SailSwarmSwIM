@@ -72,8 +72,9 @@ METRICS_PERIOD = float(os.environ.get("SWARM_METRICS_PERIOD", "1.0"))
 DC_THRESH      = float(os.environ.get("SWARM_AGG_DC", str(NEIGHBOR_RADIUS)))
 METRICS_FILE   = os.environ.get(
     "SWARM_METRICS_FILE",
-    f"agg_v2_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    f"results/aggregation_v2/agg_v2_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
 )
+os.makedirs(os.path.dirname(METRICS_FILE) or ".", exist_ok=True)
 
 # ── Metrics logger ──────────────────────────────────────────────────────────
 

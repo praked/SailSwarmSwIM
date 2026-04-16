@@ -20,8 +20,8 @@ SIM_TIME=400.0
 # Maximum number of seeds to run in parallel for each parameter set
 MAX_PARALLEL_SEEDS=4
 
-# Base name for experiments
-EXP_BASE="experiment_day2_"
+# Base name for experiments (output goes under results/flocking/)
+EXP_BASE="results/flocking/experiment_day2_"
 
 # ---------------------------------------------------------
 # Main loop over parameter combinations

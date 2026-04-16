@@ -55,8 +55,9 @@ BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))  # soft wal
 
 METRICS_FILE = os.environ.get(
     "SWARM_METRICS_FILE",
-    f"flocking_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    f"results/flocking/flocking_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
 )
+os.makedirs(os.path.dirname(METRICS_FILE) or ".", exist_ok=True)
 
 _metrics_writer = None
 def init_metrics_logger():

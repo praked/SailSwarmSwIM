@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Create output folder if it does not exist
-OUT_DIR="10experiment1"
+OUT_DIR="results/flocking/10experiment1"
 mkdir -p "${OUT_DIR}"
 
 # Fixed parameters

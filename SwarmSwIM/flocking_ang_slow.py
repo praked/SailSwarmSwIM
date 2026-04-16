@@ -86,8 +86,9 @@ HEADLESS       = os.environ.get("SWARM_HEADLESS", "0").strip().lower() in ("1", 
 
 METRICS_FILE = os.environ.get(
     "SWARM_METRICS_FILE",
-    f"flock_slow_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    f"results/flocking_slow/flock_slow_metrics_seed_{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
 )
+os.makedirs(os.path.dirname(METRICS_FILE) or ".", exist_ok=True)
 
 # ── Metrics ─────────────────────────────────────────────────────────────────
 

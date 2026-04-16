@@ -19,8 +19,8 @@ SIM_TIME=400.0
 # Maximum simultaneous jobs allowed
 MAX_PARALLEL_SEEDS=100
 
-# Base folder for experiments
-EXP_BASE="experiment_day2_"
+# Base folder for experiments (output goes under results/flocking/)
+EXP_BASE="results/flocking/experiment_day2_"
 
 # ---------------------------------------------------------
 # Main loop over parameter combinations

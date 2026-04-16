@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Output folder for this batch of aggregation experiments
-OUT_DIR="Random"
+OUT_DIR="results/aggregation/Random"
 mkdir -p "${OUT_DIR}"
 
 # Fixed parameters (adjust as needed)
