@@ -46,6 +46,9 @@ METRICS_PERIOD = float(os.environ.get("SWARM_METRICS_PERIOD", "1.0"))
 # Headless / batch mode (no interactive matplotlib window)
 HEADLESS = os.environ.get("SWARM_HEADLESS", "0").strip().lower() in ("1", "true", "yes", "on")
 
+# Toroidal (wrap-around) domain instead of hard square boundaries
+TOROIDAL = os.environ.get("SWARM_TOROIDAL", "0").strip().lower() in ("1", "true", "yes", "on")
+
 # Domain boundary steering
 BOUNDARY_GAIN = float(os.environ.get("SWARM_BOUND_GAIN", "1.2"))      # strength of "push" back inside
 BOUNDARY_MARGIN = float(os.environ.get("SWARM_BOUND_MARGIN", "5.0"))  # soft wall thickness in meters
@@ -60,7 +63,7 @@ def init_metrics_logger():
     global _metrics_writer
     f = open(METRICS_FILE, "w", newline="")
     _metrics_writer = csv.writer(f)
-    _metrics_writer.writerow(["time", "area", "polarisation_sd", "avg_wind_speed"])
+    _metrics_writer.writerow(["time", "area", "polarisation", "avg_wind_speed", "collisions"])
 
 def convex_hull_area(points: np.ndarray) -> float:
     """
@@ -102,6 +105,7 @@ def convex_hull_area(points: np.ndarray) -> float:
     return 0.5 * float(abs(np.dot(hx, np.roll(hy, -1)) - np.dot(hy, np.roll(hx, -1))))
 
 
+# --- Polarisation metrics ---
 def heading_spread_sd(agents) -> float:
     """
     Polarisation-like metric:
@@ -117,6 +121,22 @@ def heading_spread_sd(agents) -> float:
     # wrap differences into [-pi, pi]
     diffs = np.angle(np.exp(1j * (thetas - mean_angle)))
     return float(np.std(diffs))
+
+def polarisation(agents) -> float:
+    """
+    Classic flock polarisation metric:
+    magnitude of mean heading unit vector, in [0, 1].
+    1.0 => perfectly aligned, 0.0 => completely disordered.
+    """
+    if not agents:
+        return 0.0
+
+    thetas = np.deg2rad(np.array([a.psi for a in agents], dtype=float))
+    vx = np.cos(thetas)
+    vy = np.sin(thetas)
+    # Length of the average heading vector
+    R = np.hypot(vx.mean(), vy.mean())
+    return float(R)
 # --- Helper functions used in init/state handling ---
 
 def _initialize_random_agent_states(sim, rng, domain_half=DOMAIN_SIZE):
@@ -162,6 +182,7 @@ class FlockingController:
         domain_half=DOMAIN_SIZE,
         boundary_gain=BOUNDARY_GAIN,
         boundary_margin=BOUNDARY_MARGIN,
+        toroidal=False,
     ):
         self.comm = comm
         self.rng = rng
@@ -171,10 +192,11 @@ class FlockingController:
         self.w_ori = float(w_ori)
         self.w_att = float(w_att)
         self.noise_std_deg = float(noise_std_deg)
-        # Soft domain boundaries
+        # Domain parameters
         self.domain_half = float(domain_half)
         self.bound_gain = float(boundary_gain)
         self.bound_margin = float(boundary_margin)
+        self.toroidal = bool(toroidal)
     def _boundary_vec(self, pos):
         """
         Soft-wall steering vector that points back toward the interior when
@@ -183,6 +205,9 @@ class FlockingController:
         pos: (x, y) tuple or array.
         Returns a unit vector or None if safely inside.
         """
+        # In toroidal mode, no soft boundary steering is applied
+        if getattr(self, "toroidal", False):
+            return None
         x = float(pos[0])
         y = float(pos[1])
 
@@ -252,6 +277,19 @@ class FlockingController:
         for nbr, st in nb_data:
             dx = st["x"] - px
             dy = st["y"] - py
+
+            # Toroidal minimum-image wrap: choose the shortest displacement
+            if self.toroidal:
+                L = self.domain_half
+                if dx > L:
+                    dx -= 2.0 * L
+                elif dx < -L:
+                    dx += 2.0 * L
+                if dy > L:
+                    dy -= 2.0 * L
+                elif dy < -L:
+                    dy += 2.0 * L
+
             d = float(np.hypot(dx, dy))
             if d < 1e-6:
                 continue
@@ -373,6 +411,7 @@ if __name__ == "__main__":
         domain_half=DOMAIN_SIZE,
         boundary_gain=BOUNDARY_GAIN,
         boundary_margin=BOUNDARY_MARGIN,
+        toroidal=TOROIDAL,
     )
 
     # Collision avoidance module
@@ -448,13 +487,18 @@ if __name__ == "__main__":
             msg = str(agent.nav) if hasattr(agent, "nav") else ""
             if not hasattr(agent, "last_msg") or agent.last_msg != msg:
                 agent.last_msg = msg
-        
-        # --- Metrics: flock area + polarisation-like spread + avg wind speed ---
+
+        # --- Collision counting ---
+        ca.scan_collisions(sim.agents)
+        if plotter is not None:
+            plotter.set_info(f"Collisions: {ca.collision_count}")
+
+        # --- Metrics: flock area + polarisation + avg wind speed ---
         # Only log once per METRICS_PERIOD seconds
         if _metrics_writer is not None and (t - metrics_last_time[0]) >= METRICS_PERIOD:
             positions = np.array([[a.pos[0], a.pos[1]] for a in sim.agents], dtype=float)
             area = convex_hull_area(positions)
-            pol_sd = heading_spread_sd(sim.agents)  # smaller => more aligned
+            pol = polarisation(sim.agents)  # 1.0 => perfectly aligned, 0.0 => disordered
 
             # Average wind speed at agent positions
             wind_speeds = []
@@ -467,19 +511,31 @@ if __name__ == "__main__":
             avg_wind = float(np.mean(wind_speeds)) if wind_speeds else 0.0
 
             _metrics_writer.writerow(
-                [f"{t:.3f}", f"{area:.6f}", f"{pol_sd:.6f}", f"{avg_wind:.6f}"]
+                [f"{t:.3f}", f"{area:.6f}", f"{pol:.6f}", f"{avg_wind:.6f}", ca.collision_count]
             )
             metrics_last_time[0] = t
-        # Hard clamp: keep agents inside square [-DOMAIN_SIZE, DOMAIN_SIZE]
+        # Boundary handling: toroidal wrap or hard clamp
         for a in sim.agents:
-            if a.pos[0] > DOMAIN_SIZE:
-                a.pos[0] = DOMAIN_SIZE
-            elif a.pos[0] < -DOMAIN_SIZE:
-                a.pos[0] = -DOMAIN_SIZE
-            if a.pos[1] > DOMAIN_SIZE:
-                a.pos[1] = DOMAIN_SIZE
-            elif a.pos[1] < -DOMAIN_SIZE:
-                a.pos[1] = -DOMAIN_SIZE
+            if TOROIDAL:
+                # Wrap-around in a square domain [-DOMAIN_SIZE, DOMAIN_SIZE]
+                if a.pos[0] > DOMAIN_SIZE:
+                    a.pos[0] -= 2.0 * DOMAIN_SIZE
+                elif a.pos[0] < -DOMAIN_SIZE:
+                    a.pos[0] += 2.0 * DOMAIN_SIZE
+                if a.pos[1] > DOMAIN_SIZE:
+                    a.pos[1] -= 2.0 * DOMAIN_SIZE
+                elif a.pos[1] < -DOMAIN_SIZE:
+                    a.pos[1] += 2.0 * DOMAIN_SIZE
+            else:
+                # Hard clamp: keep agents inside square [-DOMAIN_SIZE, DOMAIN_SIZE]
+                if a.pos[0] > DOMAIN_SIZE:
+                    a.pos[0] = DOMAIN_SIZE
+                elif a.pos[0] < -DOMAIN_SIZE:
+                    a.pos[0] = -DOMAIN_SIZE
+                if a.pos[1] > DOMAIN_SIZE:
+                    a.pos[1] = DOMAIN_SIZE
+                elif a.pos[1] < -DOMAIN_SIZE:
+                    a.pos[1] = -DOMAIN_SIZE
 
         # Optional: periodic state dump
         # (uses t defined earlier in this callback)

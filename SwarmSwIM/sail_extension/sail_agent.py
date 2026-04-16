@@ -199,9 +199,10 @@ class TackingNavigation(SailNavigation):
             tack_duration: time in consecutive seconds between tacks
         """
         self.Dt = Dt
-        self.current_tack = 1  # 1 for starboard, -1 for port
-        self.tack_timer = 0.0
+        self.current_tack = 1  # 1 for port, -1 for starboard
         self.tack_duration = tack_duration
+        # Start ready so the first upwind entry picks the geometrically correct tack immediately
+        self.tack_timer = tack_duration
         self.tack_angle = 45.0  # nearest sail direction from oncoming wind
 
         # --- Station-keeping (figure-eight) parameters ---
@@ -363,28 +364,26 @@ class TackingNavigation(SailNavigation):
         upwind_angle = abs((desired_heading - upwind_direction + 180) % 360 - 180)
 
         if upwind_angle < self.tack_angle:  # Too close to upwind, need to tack
-            # Calculate both possible tack headings relative to upwind direction
             port_tack = (upwind_direction + self.tack_angle) % 360
             starboard_tack = (upwind_direction - self.tack_angle) % 360
 
-            # Calculate which tack gets us closer to desired heading
             port_diff = abs((port_tack - desired_heading + 180) % 360 - 180)
             starboard_diff = abs((starboard_tack - desired_heading + 180) % 360 - 180)
+            better_tack = 1 if port_diff <= starboard_diff else -1  # 1=port, -1=starboard
 
-            # Choose the better tack and update current tack state
-            if port_diff < starboard_diff:
-                self.current_tack = 1  # Port tack
-                chosen_heading = port_tack
-                tack_name = "PORT"
-            else:
-                self.current_tack = -1  # Starboard tack
-                chosen_heading = starboard_tack
-                tack_name = "STAR"
+            # Advance hold timer; switch tack only once hold period has elapsed
+            self.tack_timer += self.Dt
+            if better_tack != self.current_tack and self.tack_timer >= self.tack_duration:
+                self.current_tack = better_tack
+                self.tack_timer = 0.0  # restart hold on new tack
 
+            chosen_heading = port_tack if self.current_tack == 1 else starboard_tack
+            tack_name = "PORT" if self.current_tack == 1 else "STAR"
             self.status = f"TACK {tack_name} -> {chosen_heading:.0f}° (target: {desired_heading:.0f}°)"
             return chosen_heading
         else:
-            # Can sail more directly towards waypoint
+            # Reset timer to ready so next upwind entry can immediately pick the best tack
+            self.tack_timer = self.tack_duration
             self.status = f"DIRECT -> {desired_heading:.0f}°"
             return desired_heading
 

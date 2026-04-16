@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import os
 from ..animator2D import Plotter
 from .physics import WindField, components_from_vector
 
@@ -192,6 +193,7 @@ class WindPlotter(Plotter):
         show_agent_targets=True,
         show_agent_status=True,
         agent_goal_radius=0.18,
+        near_radius=float(os.environ.get("SWARM_NEAR_RADIUS", "0.0")),
     ):
         """
         Initialize WindPlotter with wind visualization
@@ -209,6 +211,11 @@ class WindPlotter(Plotter):
         """
         super().__init__(simulator, SIZE, artistics)
 
+        # Toroidal / wrap-around mode flag (shared with flocking_nav)
+        self.toroidal = os.environ.get("SWARM_TOROIDAL", "0").strip().lower() in ("1", "true", "yes", "on")
+        # Domain half-size for wrap checks; matches [-SIZE, SIZE]
+        self.domain_half = float(SIZE)
+
         self.show_wind = show_wind
         self.show_waypoints = show_waypoints
         self.show_wind_contours = show_wind_contours
@@ -218,6 +225,7 @@ class WindPlotter(Plotter):
         self.show_agent_status = show_agent_status
         self.agent_goal_radius = agent_goal_radius
         self.agent_goal_color = "magenta"
+        self.near_radius = float(near_radius)
 
         if self.show_wind:
             self.wind_viz = WindVisualization(
@@ -227,6 +235,50 @@ class WindPlotter(Plotter):
             )
             # Initialize with default bounds, will be updated dynamically
             self.wind_viz.create_wind_grid(self.ax, (-SIZE, SIZE), (-SIZE, SIZE))
+
+        # Info overlay (e.g. collision counter) — top-left corner
+        self._info_text = self.ax.text(
+            0.01, 0.99, "",
+            transform=self.ax.transAxes,
+            va="top", ha="left",
+            fontsize=9, color="white",
+            bbox=dict(facecolor="black", alpha=0.55, pad=3, boxstyle="round"),
+            zorder=20,
+        )
+
+    def set_info(self, text: str):
+        """Update the info overlay (e.g. 'Collisions: 3'). Thread-safe via matplotlib."""
+        self._info_text.set_text(text)
+
+    def add(self, agent, color):
+        super().add(agent, color)
+        self.animation[agent.name]["orig_color"] = color
+
+    def _break_toroidal_trail(self, xs, ys):
+        """
+        For toroidal domains, insert NaNs into the trail whenever the jump between
+        consecutive samples crosses more than half the domain, so that Matplotlib
+        does not draw a long straight line across the wrap.
+        """
+        # If not in toroidal mode or not enough points, keep as-is
+        if not getattr(self, "toroidal", False) or len(xs) < 2:
+            return xs, ys
+
+        L = self.domain_half
+        new_x = [xs[0]]
+        new_y = [ys[0]]
+
+        for i in range(1, len(xs)):
+            dx = xs[i] - xs[i - 1]
+            dy = ys[i] - ys[i - 1]
+            # Large jump -> treat as wrap and break the line
+            if abs(dx) > L or abs(dy) > L:
+                new_x.append(np.nan)
+                new_y.append(np.nan)
+            new_x.append(xs[i])
+            new_y.append(ys[i])
+
+        return np.asarray(new_x), np.asarray(new_y)
 
     def check_waypoints(self):
         """add or remove additional waypoints with ongoing simulation"""
@@ -358,8 +410,11 @@ class WindPlotter(Plotter):
             self.check_agents()
             artist_list = []
 
+            # Pre-compute all agent positions for proximity checks
+            all_pos = np.array([[a.pos[0], a.pos[1]] for a in self.sim.agents])
+
             # Update agents (from parent class logic)
-            for agent in self.sim.agents:
+            for idx, agent in enumerate(self.sim.agents):
                 # add position to list
                 self.animation[agent.name]["x"] = np.append(
                     self.animation[agent.name]["x"], agent.pos[0]
@@ -368,21 +423,29 @@ class WindPlotter(Plotter):
                     self.animation[agent.name]["y"], agent.pos[1]
                 )
                 # Pop excess
-                if len(self.animation[agent.name]["x"]) > 300:
+                if len(self.animation[agent.name]["x"]) > 200:
                     self.animation[agent.name]["x"] = np.delete(
                         self.animation[agent.name]["x"], 0
                     )
-                if len(self.animation[agent.name]["y"]) > 300:
+                if len(self.animation[agent.name]["y"]) > 200:
                     self.animation[agent.name]["y"] = np.delete(
                         self.animation[agent.name]["y"], 0
                     )
-                # Update the plot lines paths
-                self.animation[agent.name]["line"].set_data(
-                    self.animation[agent.name]["x"], self.animation[agent.name]["y"]
-                )
+                # Update the plot lines paths, with toroidal-aware trail breaking
+                hx = self.animation[agent.name]["x"]
+                hy = self.animation[agent.name]["y"]
+                xs, ys = self._break_toroidal_trail(hx, hy)
+                self.animation[agent.name]["line"].set_data(xs, ys)
                 # Update the polygon coordinates
                 pts = self.calculate_triangle(agent)
                 self.animation[agent.name]["figure"].set_xy(pts)
+
+                # Proximity colour: red if any neighbour is within near_radius, else original
+                if self.near_radius > 0 and len(all_pos) > 1:
+                    others = np.delete(all_pos, idx, axis=0)
+                    min_dist = np.hypot(others[:, 0] - agent.pos[0], others[:, 1] - agent.pos[1]).min()
+                    fig_color = "red" if min_dist < self.near_radius else self.animation[agent.name]["orig_color"]
+                    self.animation[agent.name]["figure"].set_color(fig_color)
 
                 # Update or hide agent legend depending on toggle
                 self.draw_agent_label(agent)
@@ -447,6 +510,7 @@ class WindPlotter(Plotter):
                     )
 
             self.ax.relim()
+            artist_list.append(self._info_text)
             return artist_list
 
         # get interval for real-time
