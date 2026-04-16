@@ -256,7 +256,7 @@ def main():
 
         try:
             merged, files = load_and_merge(pattern)
-        except FileNotFoundError as e:
+        except:
             print(f"  Skipping {exp_dir}: {e}")
             continue
 
