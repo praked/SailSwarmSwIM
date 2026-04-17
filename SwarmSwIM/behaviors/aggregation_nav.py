@@ -1,3 +1,32 @@
+"""
+Aggregation Navigation Behavior (Connectivity-based)
+=====================================================
+Agents aggregate toward a single shared goal location using a distributed consensus
+protocol and CPA-based collision avoidance.
+
+Consensus mechanism:
+    Each agent starts with a randomly-proposed goal (version 1).  On every tick,
+    agents poll their neighborhood and adopt the highest-version goal they hear.
+    The winning goal is broadcast and all agents navigate to a unique station on a
+    ring around it — preventing overlapping loiter paths.
+
+Convergence is measured by C_max(t): size of the largest connected cluster in the
+neighbor graph (edge = distance < DC_THRESH).  The swarm is considered aggregated
+when C_max equals the fleet size.
+
+Run:
+    python -m SwarmSwIM.behaviors.aggregation_nav
+
+Key environment variables (see README for full list):
+    SWARMSWIM_SEED               — RNG seed
+    SWARM_COMM_RADIUS            — neighborhood radius [m]
+    SWARM_STANDOFF_RADIUS        — ring radius around goal [m]
+    SWARM_AGG_DC                 — connectivity distance for C_max metric [m]
+    SWARM_T_MAX                  — simulation duration [s]
+    SWARM_HEADLESS               — 1 to run without a display
+    SWARM_METRICS_FILE           — output CSV path
+"""
+
 import os
 from pathlib import Path
 import numpy as np

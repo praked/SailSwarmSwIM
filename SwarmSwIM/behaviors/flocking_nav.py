@@ -1,3 +1,28 @@
+"""
+Flocking Navigation Behavior (Couzin-inspired)
+===============================================
+Agents self-organise into a coherent flock using three concentric interaction zones:
+
+  ZOR (Zone of Repulsion)   — short-range collision avoidance at the behavior level
+  ZOO (Zone of Orientation) — mid-range heading alignment with neighbors
+  ZOA (Zone of Attraction)  — long-range pull toward the local centroid
+
+A physics-level CollisionAvoidance layer (CPA-based, CoLREGs tie-breaking) runs on
+top of the flocking heading to handle near-miss events the zone logic misses.
+
+Run:
+    python -m SwarmSwIM.behaviors.flocking_nav
+
+Key environment variables (see README for full list):
+    SWARM_ZOR, SWARM_ZOO, SWARM_ZOA   — zone radii [m]
+    SWARM_W_ORI, SWARM_W_ATT          — orientation / attraction weights
+    SWARM_FLOCK_NOISE                  — angular noise std-dev [deg]
+    SWARMSWIM_SEED                     — RNG seed
+    SWARM_T_MAX                        — simulation duration [s]
+    SWARM_HEADLESS                     — 1 to run without a display
+    SWARM_METRICS_FILE                 — output CSV path
+"""
+
 import os
 from pathlib import Path
 import numpy as np
