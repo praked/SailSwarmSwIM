@@ -250,14 +250,15 @@ class SimplifiedSailingMechanics(SailingMechanics):
         )
         aw_mag, aw_dir = aw[0], aw[1]
 
-        # Convert apparent wind direction to relative angle from 0-180
-        # where 0 = downwind, 90 = beam reach, 180 = upwind
-        # The apparent wind direction is where wind is coming FROM relative to boat bow
-        # Normalize to [0, 180] by taking the absolute angle from downwind (180°)
+        # Convert apparent wind direction to relative angle in [0, 180]:
+        #   0   = dead downwind (tailwind)
+        #   90  = beam reach
+        #   180 = dead upwind (irons / in-irons)
+        # apparent_wind() returns angle in [0, 360] where 0=downwind, 180=irons.
+        # Fold the starboard side [180, 360] onto the port side [0, 180] symmetrically.
         relative_wind_angle = aw[1]
         if relative_wind_angle > 180:
-            relative_wind_angle = abs(relative_wind_angle - 360)
-        relative_wind_angle = relative_wind_angle % 180
+            relative_wind_angle = 360.0 - relative_wind_angle  # mirror to [0, 180]
 
         # Piecewise speed multiplier based on relative angle
         if relative_wind_angle > 135:  # Irons

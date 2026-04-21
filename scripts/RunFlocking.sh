@@ -2,7 +2,11 @@
 set -euo pipefail
 
 # Create output folder if it does not exist
+<<<<<<< HEAD
 OUT_DIR="50experiment1"
+=======
+OUT_DIR="results/flocking/10experiment1"
+>>>>>>> origin/main
 mkdir -p "${OUT_DIR}"
 
 # Fixed parameters
@@ -24,5 +28,9 @@ for SEED in $(seq 1 10); do
     SWARMSWIM_DOMAIN="${DOMAIN_VALUE}" \
     SWARM_HEADLESS=1 \
     MPLBACKEND=Agg \
+<<<<<<< HEAD
     python3 -m SwarmSwIM.flocking_nav
+=======
+    python3 -m SwarmSwIM.behaviors.flocking_nav
+>>>>>>> origin/main
 done

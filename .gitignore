@@ -163,12 +163,48 @@ cython_debug/
 
 # FOLDERS NOT TO BE INCLUDED (windows and linux from UE5 VE build, legacy)
 LEGACY/
-Windows/    
+Windows/
 Linux/
 # Ignore the testing folder, if any
 testing/
-# Ingnore installation files
+# Ignore installation files
 SwarmSwIM.egg-info
-# ignore __pychache subfolders
+# Ignore __pycache__ subfolders
 SwarmSwIM/__pycache__
 SwarmSwIM/sensors/__pycache__
+
+# ── SwarmSwIM project-specific ignores ────────────────────────────────────────
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# results/ data is gitignored; only README.md files in each subfolder are tracked.
+# Pattern: ignore contents of results/, but un-ignore subdirs so git can
+# descend into them and pick up the README.md exceptions.
+results/*
+!results/README.md
+!results/flocking/
+!results/flocking_slow/
+!results/aggregation/
+!results/aggregation_v2/
+!results/misc/
+results/flocking/*
+!results/flocking/README.md
+results/flocking_slow/*
+!results/flocking_slow/README.md
+results/aggregation/*
+!results/aggregation/README.md
+results/aggregation_v2/*
+!results/aggregation_v2/README.md
+results/misc/*
+!results/misc/README.md
+
+# Stray generated files that may land in root
+*.csv
+*.png
+*.pdf
+
+# Virtual environment files (machine-specific, not portable)
+pyvenv.cfg
+simv1/

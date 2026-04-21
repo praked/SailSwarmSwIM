@@ -20,8 +20,8 @@ SIM_TIME=400.0
 # Maximum number of seeds to run in parallel for each parameter set
 MAX_PARALLEL_SEEDS=4
 
-# Base name for experiments
-EXP_BASE="experiment_day2_"
+# Base name for experiments (output goes under results/flocking/)
+EXP_BASE="results/flocking/experiment_day2_"
 
 # ---------------------------------------------------------
 # Main loop over parameter combinations
@@ -86,7 +86,7 @@ EOF
           SWARM_METRICS_FILE="${METRICS_FILE}" \
           SWARM_HEADLESS=1 \
           MPLBACKEND=Agg \
-          python3 -m SwarmSwIM.flocking_nav &
+          python3 -m SwarmSwIM.behaviors.flocking_nav &
 
           RUNNING_JOBS=$((RUNNING_JOBS + 1))
           if [ "${RUNNING_JOBS}" -ge "${MAX_PARALLEL_SEEDS}" ]; then
