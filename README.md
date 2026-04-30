@@ -30,7 +30,7 @@ The package can be installed Globally to be accessible regardless the location.
 #### Generic installation
 For a generic installation, just run: 
 ```bash
-pip install git+https://github.com/aaron4522/SwarmSwIM.git
+pip install git+https://github.com/PittSailbot/SwarmSwIM.git
 ```
 Note that you will not be able to alter the code.
 
@@ -38,18 +38,25 @@ Note that you will not be able to alter the code.
 #### Dev installation
 For a developer (editable) installation:
 
-Clone the repository in a Folder of your choice:
+Clone the repository with submodules in a Folder of your choice:
 ```bash
-git clone https://github.com/aaron4522/SwarmSwIM.git
+git clone --recurse-submodules https://github.com/PittSailbot/SwarmSwIM.git
+```
+
+Or if you already cloned without submodules:
+```bash
+git clone https://github.com/PittSailbot/SwarmSwIM.git
+cd SwarmSwIM/
+git submodule update --init --recursive
 ```
 
 Enter the folder that has been cloned
-in the `SwarmSwIM` folder:  
+in the `SwarmSwIM` folder:
 ```bash
-cd SwarmSwIM/ # Go to download folder
+cd SwarmSwIM/ # Go to download folder (skip if already inside)
 ```
   
-Install SwarmSwIM as python pakage, `-e` indicates that is editable.
+Install SwarmSwIM as python package, `-e` indicates that is editable.
 ```bash
 pip install -e .
 ```
@@ -59,6 +66,11 @@ The installation should conclude with:
 Successfully built SwarmSwIM
 Installing collected packages: SwarmSwIM
 Successfully installed SwarmSwIM-x.x.x
+```
+
+Run the example simulation with:
+```bash
+python -m SwarmSwIM.swarmswim_examples.sail_examples.waypoint_nav.regatta_nav
 ```
 
 ---

@@ -1,0 +1,3 @@
+[submodule "SwarmSwIM/swarmswim_examples"]
+	path = SwarmSwIM/swarmswim_examples
+	url = https://github.com/aaron4522/swarmswim_examples.git

@@ -12,11 +12,11 @@ authors = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-  "numpy",
-  "matplotlib",
-  "fastapi",
-  "uvicorn",
-  "opencv-python"
+  "numpy~=1.24.3",
+  "matplotlib~=3.6.0",
+  "fastapi~=0.116.1",
+  "uvicorn~=0.35.0",
+  "opencv-python~=4.7.0.72"
 ]
 
 [tool.setuptools.packages.find]
