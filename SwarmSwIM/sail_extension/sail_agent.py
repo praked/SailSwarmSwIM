@@ -1,6 +1,7 @@
 import numpy as np
 import os
 from SwarmSwIM.agent_class import Agent
+from ..sensors.battery import Battery
 from .physics import *
 
 
@@ -26,6 +27,10 @@ class SailAgent(Agent):
         self.physics = SimplifiedSailingMechanics()  # TODO: make xml config
         # self.physics = RealisticSailingMechanics()  # TODO: make xml config
 
+        # Battery
+
+        self.battery = Battery(initial_charge=100.0, consumption_rate=0.0, agent=self)  # TODO: make xml config 
+
 
 
         # Heading control for yawrate mode
@@ -33,7 +38,7 @@ class SailAgent(Agent):
         # self.heading_kp = 2.0  # proportional gain for heading control
 
     def __str__(self):
-        return f"""{self.name}: {self.vel:.1f}m/s | H:{self.psi:.0f}°\n
+        return f"""{self.name}: {self.vel:.1f}m/s, charge: {self.battery.charge:.1f} | H:{self.psi:.0f}°\n
         {self.nav.status}"""
 
     def update(self, true_wind):
@@ -41,6 +46,7 @@ class SailAgent(Agent):
         super().tick()
         self.physics.calculate_speed(self, true_wind)
         self.physics.calculate_turn_rate(self, true_wind)
+        self.battery.update(self.Dt)
         self.nav.tick(self, true_wind)
 
 
