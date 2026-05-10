@@ -239,6 +239,16 @@ class SimplifiedSailingMechanics(SailingMechanics):
     - Turn rate is based on speed"""
 
     @staticmethod
+    def _trim_depower_factor(relative_wind_angle_deg, sail_trim):
+        # Easing the sheet (sail_trim → 0) cuts power, but only insofar as the
+        # sail relies on lift. Upwind (large relative angle) is lift-driven →
+        # easing fully depowers; downwind is drag-driven → easing barely matters.
+        a = max(0.0, min(180.0, float(relative_wind_angle_deg)))
+        sensitivity = (a / 180.0) ** 2
+        s = max(0.0, min(1.0, float(sail_trim)))
+        return 1.0 - sensitivity * (1.0 - s)
+
+    @staticmethod
     def calculate_speed(agent, true_wind):
         # TODO: make better formula accounting for sail angle, sail area, drag, etc.
         base_speed = 0.2  # TODO: replace with sail area mod
@@ -270,8 +280,14 @@ class SimplifiedSailingMechanics(SailingMechanics):
         else:  # Full down-wind
             speed_mult_from_wind = 0.9
 
-        effective_speed = max(base_speed, (speed_mult_from_wind * aw_mag))
-        # print(f"SPEED: {effective_speed}, MULT:{speed_mult_from_wind}, RW: {relative_wind_angle}, AW: {aw[1]}")
+        sail_trim = getattr(agent, "sail_trim", 1.0)
+        depower = SimplifiedSailingMechanics._trim_depower_factor(
+            relative_wind_angle, sail_trim
+        )
+        effective_speed = max(base_speed, speed_mult_from_wind * aw_mag * depower)
+        # Expose speed as a plain attribute (agent.vel is a property whose
+        # current implementation returns 0 between ticks).
+        agent.cur_speed = float(effective_speed)
 
         # Update agent pos
         vel_x = effective_speed * np.cos(np.deg2rad(agent.psi))

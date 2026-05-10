@@ -410,11 +410,10 @@ def _agent_state_line(a):
 if __name__ == "__main__":
     base = Path(__file__).resolve().parent.parent
 
-    # Build simulator from sailing regatta xml
-    sim = Simulator(
-        1 / 24,
-        sim_xml=str(base / "sail_extension" / "regatta.xml"),
-    )
+    # Build simulator from sailing regatta xml (override path via SWARM_SIM_XML).
+    default_xml = str(base / "sail_extension" / "regatta.xml")
+    sim_xml = os.environ.get("SWARM_SIM_XML", default_xml)
+    sim = Simulator(1 / 24, sim_xml=sim_xml)
 
     rng = np.random.default_rng(SEED)
     init_metrics_logger()

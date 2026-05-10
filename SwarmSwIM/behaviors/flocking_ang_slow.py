@@ -1,22 +1,22 @@
-"""flocking_ang_slow.py — Velocity-aware flocking with a solidarity mechanism.
+"""flocking_ang_slow.py — Velocity-aware flocking with sail-trim slowing.
 
 Architecture
 ============
-Built on the Couzin ZOR/ZOO/ZOA model from flocking_nav.py, extended with
-two velocity-solidarity rules:
+Built on the Couzin ZOR/ZOO/ZOA model from flocking_nav.py, with one
+heading-side modification and one speed-side mechanism.
 
-  1. Inverse-speed weighting
+  Heading-side: inverse-speed weighting
      Every neighbour's contribution to the orientation (ZOO) and attraction
-     (ZOA) vectors is scaled by  w = 1 / (spd + SPD_EPS
+     (ZOA) vectors is scaled by  w = 1 / (spd + SPD_EPS).
      A slower neighbour therefore steers the flock more than a fast one —
      the swarm naturally bends toward the direction the slowest members can
      sustain.
 
-  2. Solidarity spotlight
-     Any neighbour whose speed falls below V_SLOW is flagged as a "slow"
-     agent.  An additional pull vector (W_SOLIDARITY) is added directly
-     toward each such neighbour, independent of zone.  This prevents fast
-     agents from out-running laggards entirely.
+  Speed-side: per-agent SailTrimController
+     If any neighbour has speed < V_SLOW, the agent eases its sail (sets
+     agent.sail_trim < 1.0) via a proportional, rate-limited controller so
+     that its actual boat speed approaches mean(slow_neighbour_speeds).
+     With no slow neighbours, sail_trim relaxes back toward 1.0 (full power).
 
 Speed is already part of the communicated pose dict ("spd" key in posebox),
 so no additional communication protocol is required.
@@ -24,8 +24,8 @@ so no additional communication protocol is required.
 A CollisionAvoidance layer is retained on top of flocking output, same as
 flocking_nav.py.
 
-Metrics column "spd_spread" is added: the std-dev of agent speeds, giving a
-measure of how dispersed the velocity distribution is at each sample step.
+Metrics columns "spd_spread" (std-dev of agent speeds) and "mean_sail_trim"
+(mean over all agents, ∈ [0,1], 1 = fully sheeted in) are logged.
 """
 
 import os
@@ -44,7 +44,7 @@ from ..sensors.collision_avoidance import CollisionAvoidance
 SHOW_STATUS = os.environ.get("SWARM_SHOW_STATUS", "1").strip().lower() in ("1", "true", "yes", "on")
 
 SEED            = int  (os.environ.get("SWARMSWIM_SEED",     "142"  ))
-NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS",   "20.0"))
+NEIGHBOR_RADIUS = float(os.environ.get("SWARM_COMM_RADIUS",   "40.0"))
 DOMAIN_SIZE     = float(os.environ.get("SWARMSWIM_DOMAIN",    "30.0"))
 
 # Collision avoidance
@@ -55,9 +55,9 @@ CA_TIE_MODE    = os.environ.get("SWARM_CA_TIE_MODE", "colregs").lower()
 CA_DWELL       = float(os.environ.get("SWARM_CA_DWELL", "3.0"))
 
 # Couzin zones
-ZOR = float(os.environ.get("SWARM_ZOR", "4.0"))    # repulsion radius
-ZOO = float(os.environ.get("SWARM_ZOO", "10.0"))   # orientation radius
-ZOA = float(os.environ.get("SWARM_ZOA", "18.0"))   # attraction radius
+ZOR = float(os.environ.get("SWARM_ZOR", "10.0"))    # repulsion radius
+ZOO = float(os.environ.get("SWARM_ZOO", "20.0"))   # orientation radius
+ZOA = float(os.environ.get("SWARM_ZOA", "40.0"))   # attraction radius
 
 # Standard flocking weights
 W_ORI = float(os.environ.get("SWARM_W_ORI", "1.0"))
@@ -65,15 +65,18 @@ W_ATT = float(os.environ.get("SWARM_W_ATT", "0.6"))
 
 NOISE_STD_DEG = float(os.environ.get("SWARM_FLOCK_NOISE", "3.0"))
 
-# ── Velocity-solidarity parameters ─────────────────────────────────────────
-# Speed threshold below which an agent is considered "slow"
-V_SLOW        = float(os.environ.get("SWARM_V_SLOW",        "4.3"))   # m/s
-# Extra attraction weight toward each slow neighbour
-W_SOLIDARITY  = float(os.environ.get("SWARM_W_SOLIDARITY",  "2.0"))
+# ── Velocity-aware parameters ──────────────────────────────────────────────
 # Small constant added to speed before inversion (prevents division by zero)
-SPD_EPS       = float(os.environ.get("SWARM_SPD_EPS",       "0.05"))
+SPD_EPS       = float(os.environ.get("SWARM_SPD_EPS",       "0.1"))
 # Set to "0" to disable inverse-speed weighting (falls back to equal weights)
 USE_SPD_WT    = os.environ.get("SWARM_USE_SPD_WT", "1").strip().lower() in ("1", "true", "yes", "on")
+# Inverse-speed weight shape:  w = k / (spd + eps) ** p
+SPD_WT_K      = float(os.environ.get("SWARM_SPD_WT_K", "1.0"))
+SPD_WT_P      = float(os.environ.get("SWARM_SPD_WT_P", "1.0"))
+
+# ── Sail-trim controller parameters ────────────────────────────────────────
+TRIM_KP   = float(os.environ.get("SWARM_TRIM_KP",   "0.4"))
+TRIM_RATE = float(os.environ.get("SWARM_TRIM_RATE", "0.05"))
 
 # Boundary handling
 BOUNDARY_GAIN   = float(os.environ.get("SWARM_BOUND_GAIN",   "1.2"))
@@ -98,7 +101,7 @@ def init_metrics_logger():
     global _metrics_writer
     f = open(METRICS_FILE, "w", newline="")
     _metrics_writer = csv.writer(f)
-    _metrics_writer.writerow(["time", "area", "polarisation", "spd_spread", "avg_wind_speed", "collisions"])
+    _metrics_writer.writerow(["time", "area", "polarisation", "spd_spread", "avg_wind_speed", "collisions", "mean_sail_trim"])
 
 
 def convex_hull_area(points: np.ndarray) -> float:
@@ -140,7 +143,7 @@ def polarisation(agents) -> float:
 
 def speed_spread(agents) -> float:
     """Std-dev of agent speeds; 0 = all agents at same speed."""
-    speeds = [float(getattr(a, "vel", 0.0)) for a in agents]
+    speeds = [float(getattr(a, "cur_speed", 0.0)) for a in agents]
     return float(np.std(speeds)) if speeds else 0.0
 
 
@@ -160,14 +163,13 @@ def _initialize_random_agent_states(sim, rng, domain_half=DOMAIN_SIZE):
 # ── Velocity-aware flocking controller ─────────────────────────────────────
 
 class VelocityAwareFlockingController:
-    """Couzin-style flocking extended with velocity-solidarity rules.
+    """Couzin-style flocking with inverse-speed weighting on heading.
 
     Orientation and attraction contributions from each neighbour are scaled by
-    the neighbour's inverse speed (USE_SPD_WT=True, the default).  A separate
-    solidarity pull is added toward any neighbour slower than V_SLOW.
+    the neighbour's inverse speed (USE_SPD_WT=True, the default), so slower
+    neighbours influence the swarm's heading more than fast ones.
 
-    Result: the flock coheres around the heading that slow-moving agents can
-    sustain rather than averaging over all speeds equally.
+    Speed-side slowing-down is handled separately by SailTrimController.
     """
 
     def __init__(
@@ -179,10 +181,10 @@ class VelocityAwareFlockingController:
         zoa=ZOA,
         w_ori=W_ORI,
         w_att=W_ATT,
-        w_solidarity=W_SOLIDARITY,
-        v_slow=V_SLOW,
         spd_eps=SPD_EPS,
         use_spd_wt=USE_SPD_WT,
+        spd_wt_k=SPD_WT_K,
+        spd_wt_p=SPD_WT_P,
         noise_std_deg=NOISE_STD_DEG,
         domain_half=DOMAIN_SIZE,
         boundary_gain=BOUNDARY_GAIN,
@@ -196,10 +198,10 @@ class VelocityAwareFlockingController:
         self.zoa           = float(zoa)
         self.w_ori         = float(w_ori)
         self.w_att         = float(w_att)
-        self.w_solidarity  = float(w_solidarity)
-        self.v_slow        = float(v_slow)
         self.spd_eps       = float(spd_eps)
         self.use_spd_wt    = bool(use_spd_wt)
+        self.spd_wt_k      = float(spd_wt_k)
+        self.spd_wt_p      = float(spd_wt_p)
         self.noise_std_deg = float(noise_std_deg)
         self.domain_half   = float(domain_half)
         self.bound_gain    = float(boundary_gain)
@@ -241,9 +243,9 @@ class VelocityAwareFlockingController:
     def suggest_heading(self, agent):
         """Return a desired heading [0, 360) degrees, or None (keep current).
 
-        Velocity-solidarity rules applied on top of standard Couzin:
-        - Orientation and attraction contributions are weighted by 1/(spd+eps).
-        - Neighbours slower than V_SLOW generate an extra solidarity pull.
+        Standard Couzin with one tweak: orientation and attraction
+        contributions are weighted by 1/(spd+eps), so slow neighbours steer
+        the flock more than fast ones.
         """
         my_pose = {
             "x":   float(agent.pos[0]),
@@ -261,7 +263,6 @@ class VelocityAwareFlockingController:
         rep_vec      = np.zeros(2, dtype=float)
         ori_vec      = np.zeros(2, dtype=float)
         att_vec      = np.zeros(2, dtype=float)
-        slow_vec     = np.zeros(2, dtype=float)   # solidarity spotlight
         has_repulsion = False
 
         px, py = my_pose["x"], my_pose["y"]
@@ -285,9 +286,10 @@ class VelocityAwareFlockingController:
             r_hat = np.array([dx, dy], dtype=float) / d
             spd_j = max(0.0, float(st.get("spd", 0.0)))
 
-            # Inverse-speed weight: slower neighbour → larger influence
+            # Inverse-speed weight: slower neighbour → larger influence.
+            # Shape: w = k / (spd + eps) ** p   (k=1, p=1 = original behaviour)
             if self.use_spd_wt:
-                w = 1.0 / (spd_j + self.spd_eps)
+                w = self.spd_wt_k / (spd_j + self.spd_eps) ** self.spd_wt_p
             else:
                 w = 1.0
 
@@ -304,19 +306,13 @@ class VelocityAwareFlockingController:
                 # Attraction zone — pull toward neighbour, weighted by their slowness
                 att_vec += w * r_hat
 
-            # Solidarity spotlight: regardless of zone, add pull toward slow agents
-            if spd_j < self.v_slow:
-                slow_vec += r_hat   # direction only; W_SOLIDARITY applied below
-
         bvec = self._boundary_vec((px, py))
 
-        # Priority: repulsion > (orientation + attraction + solidarity)
+        # Priority: repulsion > (orientation + attraction)
         if has_repulsion and np.linalg.norm(rep_vec) > 1e-6:
             v = rep_vec
         else:
-            v = (self.w_ori        * ori_vec
-               + self.w_att        * att_vec
-               + self.w_solidarity * slow_vec)
+            v = self.w_ori * ori_vec + self.w_att * att_vec
 
         if np.linalg.norm(v) < 1e-6:
             if bvec is not None:
@@ -342,15 +338,49 @@ class VelocityAwareFlockingController:
         return base_heading
 
 
+# ── Sail-trim controller ────────────────────────────────────────────────────
+
+class SailTrimController:
+    """Per-tick proportional controller that drives agent.cur_speed toward
+    mean(neighbour speeds) by easing or sheeting the sail.
+
+    Active whenever the agent has any neighbour. Because sail_trim can only
+    depower (never overpower past the natural max), the closed loop converges
+    the fleet toward the slowest sustainable pace — the same behaviour a
+    real fleet exhibits.
+
+    Trim updates are rate-limited so the sheet doesn't slam tick-to-tick.
+    """
+
+    def __init__(self, comm, kp=TRIM_KP, rate=TRIM_RATE):
+        self.comm = comm
+        self.kp   = float(kp)
+        self.rate = float(rate)
+
+    def step(self, agent):
+        nb_data = self.comm.read_neighbor_poses(agent)
+        speeds = [float(st.get("spd", 0.0)) for _, st in nb_data]
+        current_trim = float(getattr(agent, "sail_trim", 1.0))
+
+        if speeds:
+            target = float(np.mean(speeds))
+            err = float(getattr(agent, "cur_speed", 0.0)) - target
+            desired = current_trim - self.kp * err / max(target, 1e-3)
+        else:
+            desired = 1.0    # no neighbours → relax sail back to full power
+
+        delta = float(np.clip(desired - current_trim, -self.rate, self.rate))
+        agent.sail_trim = float(np.clip(current_trim + delta, 0.0, 1.0))
+
+
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     base = Path(__file__).resolve().parent.parent
 
-    sim = Simulator(
-        1 / 24,
-        sim_xml=str(base / "sail_extension" / "regatta.xml"),
-    )
+    default_xml = str(base / "sail_extension" / "regatta.xml")
+    sim_xml = os.environ.get("SWARM_SIM_XML", default_xml)
+    sim = Simulator(1 / 24, sim_xml=sim_xml)
 
     rng = np.random.default_rng(SEED)
     init_metrics_logger()
@@ -366,16 +396,18 @@ if __name__ == "__main__":
         zoa=ZOA,
         w_ori=W_ORI,
         w_att=W_ATT,
-        w_solidarity=W_SOLIDARITY,
-        v_slow=V_SLOW,
         spd_eps=SPD_EPS,
         use_spd_wt=USE_SPD_WT,
+        spd_wt_k=SPD_WT_K,
+        spd_wt_p=SPD_WT_P,
         noise_std_deg=NOISE_STD_DEG,
         domain_half=DOMAIN_SIZE,
         boundary_gain=BOUNDARY_GAIN,
         boundary_margin=BOUNDARY_MARGIN,
         toroidal=TOROIDAL,
     )
+
+    trim_ctrl = SailTrimController(comm, kp=TRIM_KP, rate=TRIM_RATE)
 
     ca = CollisionAvoidance(
         comm,
@@ -415,16 +447,19 @@ if __name__ == "__main__":
         sim.tick()
         t = getattr(sim, "time", 0.0)
 
-        # Share poses (includes "spd") so VelocityAwareFlockingController can read them
+        # Share poses (includes "spd") so VelocityAwareFlockingController and
+        # SailTrimController can read them. cur_speed is set by the physics
+        # layer; agent.vel is a 0-between-ticks property so we don't use it.
         for a in sim.agents:
             comm.broadcast_pose(a, {
                 "x":   float(a.pos[0]),
                 "y":   float(a.pos[1]),
                 "hdg": float(a.psi),
-                "spd": float(getattr(a, "vel", 0.0)),
+                "spd": float(getattr(a, "cur_speed", 0.0)),
             })
 
         for agent in sim.agents:
+            trim_ctrl.step(agent)
             wind_vec = sim.wind_field.get_wind_at_position(agent.pos, sim.time)
             agent.update(wind_vec)
 
@@ -458,8 +493,12 @@ if __name__ == "__main__":
                 wind_speeds.append(float(np.hypot(wx, wy)))
             avg_wind = float(np.mean(wind_speeds)) if wind_speeds else 0.0
 
+            trims = [float(getattr(a, "sail_trim", 1.0)) for a in sim.agents]
+            mean_trim = float(np.mean(trims)) if trims else 1.0
+
             _metrics_writer.writerow(
-                [f"{t:.3f}", f"{area:.6f}", f"{pol:.6f}", f"{spd_std:.6f}", f"{avg_wind:.6f}", ca.collision_count]
+                [f"{t:.3f}", f"{area:.6f}", f"{pol:.6f}", f"{spd_std:.6f}",
+                 f"{avg_wind:.6f}", ca.collision_count, f"{mean_trim:.6f}"]
             )
             metrics_last_time[0] = t
 
