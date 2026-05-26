@@ -30,12 +30,12 @@
             Direction [degrees]
             Turbulence [standard deviations]
             Temporal Frequency [seconds]-->
-        <wind_field> 10.0 120 0.3 5.0 </wind_field>
+        <wind_field> 15.0 120 0.3 50.0 </wind_field>
 
         <!-- Define space and time-dependent gusts -->
         <!-- Adds gusts following sinusoidal disturbances, space and time-dependent.
         Direction of gust advancement corresponds with direction of disturbance -->
-        <!-- <wind_gusts>
+        <wind_gusts>
             <gust1>
                 <amplitude> 2.5 </amplitude>
                 <speed> 10.0 </speed>
@@ -43,7 +43,7 @@
                 <duration> 5.0 </duration>
                 <wavelength> 50.0 </wavelength>
             </gust1>
-        </wind_gusts> -->
+        </wind_gusts>
 
         <!-- Define wave sinusoidal current, Global -->
         <!-- Globally applied, sinusoidal time-dependent noise -->

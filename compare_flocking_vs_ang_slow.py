@@ -4,16 +4,16 @@ compare_flocking_vs_ang_slow.py
 Environment × inverse-speed-weight p-sweep, parallelised. (k held at 1.)
 
   - 4 wind environments  (5 m/s & 10 m/s, with and without gusts)
-  - 1 flocking_nav baseline + 14 flocking_ang_slow variants
+  - 1 flocking_nav baseline + 17 flocking_ang_slow variants
         SWARM_SPD_WT_K = 1.0 (fixed)
-        SWARM_SPD_WT_P ∈ {-0.1, -0.001, 0.001, 0.005, 0.01, 0.05, 0.1,
-                          0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0}
-        Negative p flips the weighting toward FAST neighbours — testing
-        the "fast = locally-validated heading" hypothesis.
+        SWARM_SPD_WT_P ∈ {-2, -1.5, -1, -0.1, -0.001, 0.001, 0.005,
+                          0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 1.0, 1.5,
+                          2.0, 3.0}
+        Negative p flips the weighting toward FAST neighbours.
   - N_RUNS=50 seeds per (env × config)
-  - Total: 4 × (1 + 14) × 50 = 3 000 simulations
+  - Total: 4 × (1 + 17) × 50 = 3 600 simulations
   - Reuses CSVs from prior 20260509_* and 20260510_* folders for matching
-    cells. Only p ∈ {-0.1, -0.001} are new → ~400 sims actually run.
+    cells. Only p ∈ {-1.5, -1} are new → 400 fresh sims.
 
 Steady-state stats use the window  t ∈ [WINDOW_START_S, WINDOW_END_S]
 (default 100 → T_MAX). The per-env time-series plots also clip their x-axis
@@ -66,10 +66,11 @@ BASE_SEED      = int(os.environ.get("BASE_SEED",      "42"))
 SEEDS          = [BASE_SEED + i for i in range(N_RUNS)]
 WINDOW_START_S = float(os.environ.get("WINDOW_START_S", "100.0"))
 WINDOW_END_S   = float(os.environ.get("WINDOW_END_S",   str(T_MAX_F)))
-# Cap workers at 10 — diminishing returns beyond that for this workload.
+# Use all logical cores by default — this box is 10-core and the sims are
+# CPU-bound. Override with MAX_WORKERS env var if needed.
 MAX_WORKERS    = int(os.environ.get(
     "MAX_WORKERS",
-    str(min(10, max(1, (os.cpu_count() or 4) - 2))),
+    str(max(1, os.cpu_count() or 10)),
 ))
 
 # Paths
@@ -88,6 +89,8 @@ XML_OUT_DIR.mkdir(parents=True, exist_ok=True)
 # Reuse CSVs from prior 20260509_* and 20260510_* sweeps for cells that already exist.
 # RESULTS_DIR is checked first, then prior folders in reverse-chronological order.
 PRIOR_SWEEP_DIRS = [
+    COMPARISON_DIR / "flock_sweep_20260510_151905",  # 15-value sweep incl. p=-2
+    COMPARISON_DIR / "flock_sweep_20260510_124648",  # 14-value sweep incl. p∈{-0.1, -0.001}
     COMPARISON_DIR / "flock_sweep_20260510_115535",  # 12-value p sweep incl. 0.001, 0.005
     COMPARISON_DIR / "flock_sweep_20260510_111416",
     COMPARISON_DIR / "flock_sweep_20260510_110934",
@@ -125,8 +128,9 @@ SHARED_PARAMS: dict[str, str] = {
 # 10 ang_slow variants: k=1 fixed, p sweep extended into the very-low-p tail
 # (0.01, 0.05) to characterise the near-uniform-weighting regime.
 K_VALUES = (1.0,)
-P_VALUES = (-0.1, -0.001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.3, 0.5, 0.7,
-            1.0, 1.5, 2.0, 3.0)
+P_VALUES = (-2.0, -1.5, -1.0, -0.1, -0.001,
+             0.001, 0.005, 0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 1.0, 1.5,
+             2.0, 3.0)
 SWEEP_CONFIGS: list[dict] = [
     {
         "label": f"k={k:g}, p={p:g}",
@@ -306,24 +310,35 @@ def csv_exists_anywhere(csv_filename: str, search_dirs: list[Path]) -> bool:
 
 # Single-k ramp (only k=1 in this sweep) — kept for compatibility with helpers.
 SWEEP_COLORS_K = ["#999999"]
-# 14-colour ramp keyed by p value (negative p = fast-bias regime in red,
-# positive p = slow-bias regime in viridis cool→warm).
-SWEEP_COLORS_P = [
-    "#7f0000",  # p=-0.1   (fast-bias, strong)
-    "#d94801",  # p=-0.001 (fast-bias, weak)
-    "#440154",  # p=0.001
-    "#471365",  # p=0.005
-    "#482576",  # p=0.01
-    "#433d84",  # p=0.05
-    "#38598c",  # p=0.1
-    "#2d708e",  # p=0.3
-    "#25858e",  # p=0.5
-    "#1f9a8a",  # p=0.7
-    "#2eb37c",  # p=1.0
-    "#6dcd59",  # p=1.5
-    "#b4dd2c",  # p=2.0
-    "#fde725",  # p=3.0
-]
+# Sign-split sequential colour ramp keyed by log|p|:
+#   negative p (fast-bias)  → Blues, darker = larger |p|
+#   positive p (slow-bias)  → Reds,  darker = larger |p|
+# Log-magnitude mapping keeps small-|p| variants visually distinct from each
+# other (a linear diverging map collapses everything within ~|p|<0.1 into
+# indistinguishable near-white tones, since the sweep spans 4 decades).
+def _build_sweep_colors_p() -> list[str]:
+    import matplotlib.colors as _mc
+    from matplotlib import colormaps as _cmaps
+    if not P_VALUES:
+        return []
+    blues, reds = _cmaps["Blues"], _cmaps["Reds"]
+    # Rank within each sign group so every variant gets a distinct shade.
+    # |p| values span 4 decades; a continuous log mapping clumps the
+    # large-|p| variants together at the dark end (e.g. p=1, 1.5, 2, 3 are
+    # nearly identical reds). Rank-based mapping spreads them evenly.
+    neg_idx = sorted([i for i, p in enumerate(P_VALUES) if p < 0],
+                     key=lambda i: abs(P_VALUES[i]))   # smallest |p| first
+    pos_idx = sorted([i for i, p in enumerate(P_VALUES) if p >= 0],
+                     key=lambda i: abs(P_VALUES[i]))
+    out: list[str | None] = [None] * len(P_VALUES)
+    for rank, i in enumerate(neg_idx):
+        t = 0.35 + 0.57 * (rank / max(1, len(neg_idx) - 1))
+        out[i] = _mc.to_hex(blues(float(t)))
+    for rank, i in enumerate(pos_idx):
+        t = 0.35 + 0.57 * (rank / max(1, len(pos_idx) - 1))
+        out[i] = _mc.to_hex(reds(float(t)))
+    return [c for c in out if c is not None]
+SWEEP_COLORS_P = _build_sweep_colors_p()
 BASELINE_COLOR = "black"
 
 PRETTY_PARAMS = {
